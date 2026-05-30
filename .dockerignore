@@ -1,0 +1,8 @@
+__pycache__
+*.pyc
+.env
+radar.db
+.git
+.venv
+venv
+temp/

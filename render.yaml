@@ -1,6 +1,5 @@
 services:
-  render:
-    type: web
+  - type: web
     name: finance-intern-radar
     runtime: python
     buildCommand: pip install -r requirements.txt
