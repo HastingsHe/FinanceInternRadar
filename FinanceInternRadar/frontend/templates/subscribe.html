@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Subscribe - FinanceInternRadar{% endblock %}
+{% block content %}
+
+<section class="section">
+    <h1>Subscribe to Alerts</h1>
+    <p class="section-desc">Choose companies and roles. Get notified when applications are about to open.</p>
+
+    <form id="subscribe-form" class="subscribe-form" method="post" action="/api/subscribe">
+        <div class="form-group">
+            <label for="email">Email Address *</label>
+            <input type="email" id="email" name="email" required placeholder="you@example.com">
+        </div>
+        <div class="form-group">
+            <label for="name">Name (optional)</label>
+            <input type="text" id="name" name="name" placeholder="Your name">
+        </div>
+
+        <div class="form-group">
+            <label>Select Companies</label>
+            <div class="checkbox-group company-checkboxes">
+                <div class="checkbox-select-all">
+                    <label><input type="checkbox" id="select-all-companies"> Select All</label>
+                </div>
+                {% for c in companies %}
+                <label class="checkbox-item">
+                    <input type="checkbox" name="company_ids" value="{{ c.id }}">
+                    <span>{{ c.name }}</span>
+                    <span class="company-meta">{{ c.region }} &middot; {{ c.category }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Role Types</label>
+            <div class="checkbox-group">
+                <div class="checkbox-select-all">
+                    <label><input type="checkbox" id="select-all-roles"> Select All</label>
+                </div>
+                {% for rt in role_types %}
+                <label class="checkbox-item">
+                    <input type="checkbox" name="role_types" value="{{ rt }}">
+                    <span>{{ rt }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="region">Region Preference</label>
+            <select id="region" name="region" class="filter-select">
+                <option value="all">All Regions</option>
+                <option value="US">US Only</option>
+                <option value="UK">UK Only</option>
+            </select>
+        </div>
+
+        <button type="submit" class="btn-primary btn-lg" id="subscribe-btn">Subscribe</button>
+        <div id="subscribe-status" class="subscribe-status"></div>
+    </form>
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('subscribe-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = document.getElementById('subscribe-btn');
+    const status = document.getElementById('subscribe-status');
+    btn.disabled = true;
+    btn.textContent = 'Subscribing...';
+    status.textContent = '';
+    status.className = 'subscribe-status';
+
+    const formData = new FormData(this);
+    try {
+        const resp = await fetch('/api/subscribe', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            status.textContent = 'Subscribed! We\'ll email you when your tracked programs are about to open.';
+            status.className = 'subscribe-status success';
+        } else {
+            status.textContent = 'Something went wrong. Please try again.';
+            status.className = 'subscribe-status error';
+        }
+    } catch (err) {
+        status.textContent = 'Network error. Please try again.';
+        status.className = 'subscribe-status error';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Subscribe';
+});
+
+// Select all toggles
+document.getElementById('select-all-companies').addEventListener('change', function() {
+    document.querySelectorAll('.company-checkboxes input[name="company_ids"]').forEach(cb => {
+        cb.checked = this.checked;
+    });
+});
+document.getElementById('select-all-roles').addEventListener('change', function() {
+    document.querySelectorAll('input[name="role_types"]').forEach(cb => {
+        cb.checked = this.checked;
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Daily Picks - FinanceInternRadar{% endblock %}
+{% block content %}
+
+<section class="section">
+    <h1>Daily Hidden Gems <span class="badge badge-gem">{{ today }}</span></h1>
+    <p class="section-desc">
+        Every day, we spotlight three lesser-known finance companies with outstanding intern programs.
+        These are the firms that don't dominate headlines but offer incredible career launches.
+    </p>
+
+    <div class="picks-grid picks-grid-large">
+        {% for pick in picks %}
+        <div class="pick-card pick-card-detailed">
+            <div class="pick-category">{{ pick.category }}</div>
+            <h3>{{ pick.name }}</h3>
+            <p class="pick-desc">{{ pick.description }}</p>
+            <div class="pick-reason-box">
+                <strong>Why we picked it today:</strong>
+                <p>{{ pick.reason }}</p>
+            </div>
+            <div class="pick-actions">
+                {% if pick.website %}
+                <a href="{{ pick.website }}" target="_blank" class="btn-secondary btn-sm">Website</a>
+                {% endif %}
+                {% if pick.careers_url %}
+                <a href="{{ pick.careers_url }}" target="_blank" class="btn-primary btn-sm">Careers Page</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+{% if historical_picks %}
+<section class="section">
+    <h2>Previous Picks</h2>
+    <div class="historical-picks">
+        {% for date, picks_list in historical_picks.items() if date != today %}
+        <details class="historical-day">
+            <summary>{{ date }} &mdash; {{ picks_list | length }} companies</summary>
+            <ul>
+                {% for hp in picks_list %}
+                <li><strong>{{ hp.name }}</strong> <span class="company-category">{{ hp.category }}</span> &mdash; {{ hp.reason }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}FinanceInternRadar - Home{% endblock %}
+{% block content %}
+
+<section class="hero">
+    <div class="hero-content">
+        <h1>Finance Internship<br><span class="highlight">Radar</span></h1>
+        <p class="hero-sub">
+            Track, predict, and get alerted on intern program openings at 30+ finance companies across US &amp; UK.
+            Never miss an application window again.
+        </p>
+        <div class="hero-actions">
+            <a href="/subscribe" class="btn-primary">Set Up Alerts</a>
+            <a href="/companies" class="btn-secondary">Browse Companies</a>
+        </div>
+        <div class="hero-stats">
+            <div class="stat"><span class="stat-num">{{ total_companies }}</span> Companies</div>
+            <div class="stat"><span class="stat-num">{{ total_programs }}</span> Programs Tracked</div>
+            <div class="stat"><span class="stat-num">2026</span> Summer Cycle</div>
+        </div>
+    </div>
+</section>
+
+<section class="section timeline-section">
+    <h2>Upcoming Opening Timeline <span class="badge">US</span></h2>
+    <div class="timeline">
+        {% for p in us_predictions %}
+        <div class="timeline-item">
+            <div class="timeline-date">{{ p.predicted_open_date | format_date }}</div>
+            <div class="timeline-content">
+                <strong>{{ p.name }}</strong>
+                <span class="timeline-program">{{ p.program_name }}</span>
+                <span class="confidence" title="Prediction confidence">
+                    {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
+                    {{ (p.confidence * 100) | int }}%
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <h2 style="margin-top: 2rem;">Upcoming Opening Timeline <span class="badge badge-uk">UK</span></h2>
+    <div class="timeline">
+        {% for p in uk_predictions %}
+        <div class="timeline-item">
+            <div class="timeline-date">{{ p.predicted_open_date | format_date }}</div>
+            <div class="timeline-content">
+                <strong>{{ p.name }}</strong>
+                <span class="timeline-program">{{ p.program_name }}</span>
+                <span class="confidence">
+                    {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
+                    {{ (p.confidence * 100) | int }}%
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="section picks-section">
+    <h2>Today's Hidden Gems <span class="badge badge-gem">{{ today.strftime('%b %d') }}</span></h2>
+    <p class="section-desc">Three lesser-known finance companies worth your attention &mdash; refreshed daily.</p>
+    <div class="picks-grid">
+        {% for pick in picks %}
+        <div class="pick-card">
+            <div class="pick-category">{{ pick.category }}</div>
+            <h3>{{ pick.name }}</h3>
+            <p class="pick-reason">{{ pick.reason }}</p>
+            {% if pick.website %}
+            <a href="{{ pick.website }}" target="_blank" class="pick-link">Visit Website &rarr;</a>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="section cta-section">
+    <h2>Ready to stay ahead?</h2>
+    <p>Pick the companies and roles you care about. We'll alert you before applications open.</p>
+    <a href="/subscribe" class="btn-primary">Subscribe Now</a>
+</section>
+
+{% endblock %}

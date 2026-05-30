@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Companies - FinanceInternRadar{% endblock %}
+{% block content %}
+
+<section class="section">
+    <h1>All Companies</h1>
+    <p class="section-desc">Browse 30+ finance companies with predicted 2026 intern program opening dates.</p>
+
+    <!-- Filters -->
+    <form class="filter-bar" method="get" action="/companies">
+        <select name="region" class="filter-select">
+            <option value="all" {% if filters.region == 'all' %}selected{% endif %}>All Regions</option>
+            <option value="US" {% if filters.region == 'US' %}selected{% endif %}>US</option>
+            <option value="UK" {% if filters.region == 'UK' %}selected{% endif %}>UK</option>
+        </select>
+        <select name="category" class="filter-select">
+            <option value="all" {% if filters.category == 'all' %}selected{% endif %}>All Categories</option>
+            {% for cat in categories %}
+            <option value="{{ cat }}" {% if filters.category == cat %}selected{% endif %}>{{ cat }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="search" class="filter-search" placeholder="Search companies..." value="{{ filters.search }}">
+        <button type="submit" class="btn-primary btn-sm">Filter</button>
+        <a href="/companies" class="btn-secondary btn-sm">Clear</a>
+    </form>
+
+    <!-- Company Cards -->
+    <div class="company-grid">
+        {% for c in companies %}
+        <div class="company-card {% if c.is_featured %}featured{% endif %}">
+            <div class="company-header">
+                <h3>{{ c.name }}</h3>
+                <span class="company-region region-{{ c.region.lower() }}">{{ c.region }}</span>
+            </div>
+            <span class="company-category cat-{{ c.category.lower().replace(' ', '-').replace('/', '-') }}">{{ c.category }}</span>
+            <p class="company-desc">{{ c.description }}</p>
+
+            {% if c.predictions %}
+            <div class="prediction-list">
+                {% for p in c.predictions %}
+                <div class="prediction-row">
+                    <span class="pred-program">{{ p.program_name }}</span>
+                    <span class="pred-date">{{ p.predicted_open_date | format_date }}</span>
+                    <span class="confidence">
+                        {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="no-prediction">No prediction available yet.</p>
+            {% endif %}
+
+            {% if c.careers_url %}
+            <a href="{{ c.careers_url }}" target="_blank" class="careers-link">View Careers Page &rarr;</a>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+{% endblock %}
