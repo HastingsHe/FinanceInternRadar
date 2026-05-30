@@ -5,11 +5,12 @@ FastAPI backend serving the web interface and API endpoints.
 
 import os
 import sys
+import sqlite3
 from datetime import datetime, date
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -221,14 +222,14 @@ async def subscribe_page(request: Request):
 # ─── API Endpoints ─────────────────────────────────────────
 
 @app.post("/api/subscribe")
-async def api_subscribe(
-    email: str = Form(...),
-    name: str = Form(""),
-    company_ids: list = Form(...),
-    role_types: list = Form(...),
-    region: str = Form("all"),
-):
+async def api_subscribe(request: Request):
     """Subscribe to alerts."""
+    form_data = await request.form()
+    email = form_data.get("email", "")
+    name = form_data.get("name", "")
+    company_ids = form_data.getlist("company_ids")
+    role_types = form_data.getlist("role_types")
+    region = form_data.get("region", "all")
     conn = get_db()
 
     # Upsert subscriber
@@ -303,7 +304,7 @@ async def api_stats():
     total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     total_programs = conn.execute("SELECT COUNT(*) FROM intern_programs WHERE year=2026").fetchone()[0]
     total_subscribers = conn.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]
-    total_subs = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE active=1").fetchone()[0]
+    total_subs = conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
 
     by_region = {}
     for row in conn.execute(
@@ -327,6 +328,69 @@ async def api_stats():
         "by_region": by_region,
         "by_category": by_category,
     })
+
+
+@app.get("/api/export")
+async def api_export():
+    """Export user data to Excel and return the file."""
+    from io import BytesIO
+    from datetime import datetime
+
+    conn = get_db()
+    wb = __import__("openpyxl").Workbook()
+
+    # Sheet 1: 订阅用户
+    ws = wb.active
+    ws.title = "订阅用户"
+    headers = ["ID", "邮箱", "姓名", "注册时间", "订阅公司数", "职位类型"]
+    for c, h in enumerate(headers, 1):
+        ws.cell(row=1, column=c, value=h)
+    for row_idx, s in enumerate(conn.execute(
+        "SELECT id, email, name, created_at FROM subscribers ORDER BY created_at DESC"
+    ).fetchall(), 2):
+        sid = s[0]
+        cnt = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE subscriber_id=?", (sid,)).fetchone()[0]
+        roles = [r[0] for r in conn.execute(
+            "SELECT DISTINCT role_type FROM subscriptions WHERE subscriber_id=? AND role_type IS NOT NULL", (sid,)
+        ).fetchall()]
+        vals = [s[0], s[1], s[2] or "", s[3], cnt, ", ".join(roles) if roles else ""]
+        for c, v in enumerate(vals, 1):
+            ws.cell(row=row_idx, column=c, value=v)
+
+    # Sheet 2: 订阅明细
+    ws2 = wb.create_sheet("订阅明细")
+    headers2 = ["订阅ID", "用户邮箱", "用户姓名", "公司", "地区", "类别", "职位"]
+    for c, h in enumerate(headers2, 1):
+        ws2.cell(row=1, column=c, value=h)
+    for row_idx, d in enumerate(conn.execute("""
+        SELECT s.id, sub.email, sub.name, c.name, c.region, c.category, s.role_type
+        FROM subscriptions s
+        JOIN subscribers sub ON s.subscriber_id=sub.id
+        LEFT JOIN companies c ON s.company_id=c.id
+        ORDER BY sub.email, c.name
+    """).fetchall(), 2):
+        for c, v in enumerate([d[i] or "" for i in range(7)], 1):
+            ws2.cell(row=row_idx, column=c, value=v)
+
+    # Sheet 3: 统计
+    ws3 = wb.create_sheet("统计")
+    ws3.cell(row=1, column=1, value=f"FinanceInternRadar - 导出于 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    r = 3
+    ws3.cell(row=r, column=1, value="订阅用户数"); ws3.cell(row=r, column=2, value=conn.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]); r += 1
+    ws3.cell(row=r, column=1, value="订阅记录数"); ws3.cell(row=r, column=2, value=conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]); r += 2
+    ws3.cell(row=r, column=1, value="地区分布"); r += 1
+    for reg in conn.execute("SELECT c.region, COUNT(*) c FROM subscriptions s JOIN companies c ON s.company_id=c.id GROUP BY c.region"):
+        ws3.cell(row=r, column=1, value=reg[0]); ws3.cell(row=r, column=2, value=reg[1]); r += 1
+
+    conn.close()
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=FinanceInternRadar_Users.xlsx"},
+    )
 
 
 # ─── Run ────────────────────────────────────────────────────
