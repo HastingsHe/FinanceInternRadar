@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - FinanceInternRadar</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #f0f4f8;
+            --card: #ffffff;
+            --border: #dce3eb;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --blue: #3b82f6;
+            --blue-hover: #2563eb;
+            --green: #10b981;
+            --orange: #f59e0b;
+            --red: #ef4444;
+            --radius: 10px;
+            --radius-sm: 8px;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* Top bar */
+        .topbar {
+            background: #fff;
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .topbar .brand {
+            font-size: 18px;
+            font-weight: 800;
+            color: #1e3a5f;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .topbar .brand span {
+            color: var(--blue);
+        }
+        .topbar .actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .badge-auth {
+            background: #d1fae5;
+            color: #065f46;
+            padding: 3px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .btn-sm {
+            padding: 5px 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.15s;
+        }
+        .btn-sm.export {
+            background: var(--blue);
+            color: #fff;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-sm.export:hover { background: var(--blue-hover); }
+        .btn-sm.logout {
+            background: #e2e8f0;
+            color: #475569;
+        }
+        .btn-sm.logout:hover { background: #cbd5e1; }
+        .btn-sm.green { background: var(--green); color: #fff; }
+        .btn-sm.green:hover { background: #059669; }
+        .btn-sm.grey { background: #cbd5e1; color: #475569; }
+        .btn-sm.grey:hover { background: #94a3b8; color: #fff; }
+
+        /* Container */
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+
+        /* Tabs */
+        .tab-nav {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 4px;
+            border: 1px solid var(--border);
+            width: fit-content;
+        }
+        .tab-nav button {
+            padding: 8px 22px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-radius: 7px;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .tab-nav button.active {
+            background: var(--blue);
+            color: #fff;
+            font-weight: 600;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Cards */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+        }
+        .card h2 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .card h2 .count {
+            background: #e8f0fe;
+            color: var(--blue);
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        /* Tables */
+        .table-wrap { overflow-x: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 2px solid var(--border);
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #eef1f5;
+            white-space: nowrap;
+        }
+        tr:hover td { background: #f8fafd; }
+        .none-msg { color: #94a3b8; font-size: 13px; padding: 14px 0; }
+        .encrypted-tag {
+            background: #e8f0fe;
+            color: #3b82f6;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        /* Alerts */
+        .alert-banner {
+            background: #fef9c3;
+            border: 1px solid #facc15;
+            border-radius: var(--radius);
+            padding: 12px 18px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #854d0e;
+        }
+        .alert-banner strong { display: block; margin-bottom: 6px; }
+
+        /* Program rows */
+        .prog-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            border-bottom: 1px solid #eef1f5;
+            font-size: 13px;
+            gap: 12px;
+        }
+        .prog-row .info { flex: 1; }
+        .prog-row .info strong { margin-right: 8px; }
+        .prog-row .info .meta { color: var(--text-secondary); font-size: 12px; }
+        .prog-row .opts { display: flex; gap: 6px; align-items: center; }
+        .prog-row input[type="date"] {
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: inherit;
+            width: 130px;
+        }
+        .section-label {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .section-label.upcoming { color: var(--orange); }
+        .section-label.opened { color: var(--green); }
+        .section-label.closed { color: #94a3b8; }
+
+        .alert-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .alert-row.unread { background: #fef9c3; }
+        .alert-row.read { background: #f8fafd; }
+        .alert-tag {
+            padding: 1px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .alert-tag.early { background: #ef4444; }
+        .alert-tag.normal { background: #10b981; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="brand"><span>&#9651;</span> FinanceInternRadar Admin</div>
+        <div class="actions">
+            <span class="badge-auth">已认证</span>
+            <a href="/api/export" class="btn-sm export">导出 Excel</a>
+            <button id="logout-btn" class="btn-sm logout">退出</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alerts-section"></div>
+
+        <div class="tab-nav">
+            <button class="active" onclick="switchTab('subscribers')">订阅用户</button>
+            <button onclick="switchTab('programs')">项目管理</button>
+            <button onclick="switchTab('alerts')">预警记录</button>
+        </div>
+
+        <!-- Subscribers Tab -->
+        <div id="tab-subscribers" class="tab-content active">
+            <div class="card">
+                <h2>订阅用户列表 <span class="count" id="subscriber-count">0</span></h2>
+                <div style="font-size:12px; color:var(--text-secondary); margin-bottom:14px;">
+                    <span class="encrypted-tag">AES-128 加密存储</span> 所有用户数据加密存储，仅管理员可解密查看
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>邮箱</th>
+                                <th>姓名</th>
+                                <th>年龄</th>
+                                <th>性别</th>
+                                <th>学校</th>
+                                <th>学业阶段</th>
+                                <th>毕业时间</th>
+                                <th>注册时间</th>
+                                <th>订阅公司数</th>
+                                <th>职位</th>
+                            </tr>
+                        </thead>
+                        <tbody id="subscriber-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Programs Tab -->
+        <div id="tab-programs" class="tab-content">
+            <div class="card">
+                <h2>项目状态管理</h2>
+                <p style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">标记项目为"已开放"。实际开放日期早于预测时自动生成预警。</p>
+                <div id="program-list" style="max-height:600px; overflow-y:auto;"></div>
+            </div>
+        </div>
+
+        <!-- Alerts Tab -->
+        <div id="tab-alerts" class="tab-content">
+            <div class="card">
+                <h2>预警记录</h2>
+                <div id="alerts-history" style="max-height:500px; overflow-y:auto;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function switchTab(name) {
+        document.querySelectorAll('.tab-nav button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        event.target.classList.add('active');
+        document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    async function checkAuth() {
+        const resp = await fetch('/api/admin/check');
+        const data = await resp.json();
+        if (!data.authenticated) { window.location.href = '/admin'; }
+    }
+
+    async function loadDashboard() {
+        const [userResp, adminResp] = await Promise.all([
+            fetch('/api/admin/userdata'),
+            fetch('/api/admin/alerts')
+        ]);
+        const users = await userResp.json();
+        const admin = await adminResp.json();
+
+        document.getElementById('subscriber-count').textContent = users.length;
+        const tbody = document.getElementById('subscriber-table');
+        if (users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="11" class="none-msg">暂无订阅用户</td></tr>';
+        } else {
+            tbody.innerHTML = users.map(u => `
+                <tr>
+                    <td>${u.id}</td>
+                    <td>${u.email}</td>
+                    <td>${u.name || '-'}</td>
+                    <td>${u.age || '-'}</td>
+                    <td>${u.gender || '-'}</td>
+                    <td>${u.school || '-'}</td>
+                    <td>${u.academic_stage || '-'}</td>
+                    <td>${u.graduation_time || '-'}</td>
+                    <td>${u.created_at}</td>
+                    <td>${u.company_count}</td>
+                    <td>${u.roles || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        const alertsDiv = document.getElementById('alerts-section');
+        if (admin.potential_early && admin.potential_early.length > 0) {
+            alertsDiv.innerHTML = '<div class="alert-banner"><strong>潜在提前开放预警</strong>' +
+                admin.potential_early.map(p =>
+                    `<span>${p.company} - ${p.program_name}（预测 ${p.predicted_open_date}）</span>`
+                ).join('<br>') + '</div>';
+        } else { alertsDiv.innerHTML = ''; }
+
+        const progDiv = document.getElementById('program-list');
+        let html = '';
+        if (admin.upcoming && admin.upcoming.length > 0) {
+            html += '<div class="section-label upcoming">待开放 (' + admin.upcoming.length + ')</div>';
+            html += admin.upcoming.map(p =>
+                `<div class="prog-row">
+                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">预测 ${p.predicted_open_date || 'N/A'}</span></div>
+                    <div class="opts">
+                        <input type="date" id="date-${p.id}" value="${new Date().toISOString().split('T')[0]}">
+                        <button onclick="markOpen(${p.id})" class="btn-sm green">已开放</button>
+                    </div>
+                </div>`
+            ).join('');
+        }
+        if (admin.opened && admin.opened.length > 0) {
+            html += '<div class="section-label opened" style="margin-top:16px;">已开放 (' + admin.opened.length + ')</div>';
+            html += admin.opened.map(p =>
+                `<div class="prog-row">
+                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">实际 ${p.open_date}</span></div>
+                    <div class="opts"><button onclick="markClosed(${p.id})" class="btn-sm grey">已关闭</button></div>
+                </div>`
+            ).join('');
+        }
+        if (admin.closed && admin.closed.length > 0) {
+            html += '<div class="section-label closed" style="margin-top:16px;">已关闭 (' + admin.closed.length + ')</div>';
+            html += admin.closed.map(p =>
+                `<div class="prog-row">
+                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">开放 ${p.open_date}</span></div>
+                </div>`
+            ).join('');
+        }
+        progDiv.innerHTML = html || '<span class="none-msg">暂无项目</span>';
+
+        const histDiv = document.getElementById('alerts-history');
+        if (admin.alerts && admin.alerts.length > 0) {
+            histDiv.innerHTML = admin.alerts.map(a => {
+                const rowClass = a.is_read ? 'read' : 'unread';
+                const tagHtml = a.alert_type === 'early_open'
+                    ? '<span class="alert-tag early">提前开放</span>'
+                    : '<span class="alert-tag normal">如期开放</span>';
+                return `<div class="alert-row ${rowClass}">
+                    <span>${tagHtml} ${a.message}</span>
+                    <span style="font-size:11px; color:#94a3b8;">${a.created_at || ''}</span>
+                </div>`;
+            }).join('');
+        } else {
+            histDiv.innerHTML = '<span class="none-msg">暂无预警记录</span>';
+        }
+    }
+
+    async function markOpen(programId) {
+        const dateInput = document.getElementById('date-' + programId);
+        const actualDate = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
+        await fetch('/api/admin/programs/' + programId + '/mark-open', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({actual_date: actualDate})
+        });
+        await loadDashboard();
+    }
+
+    async function markClosed(programId) {
+        await fetch('/api/admin/programs/' + programId + '/mark-closed', {method: 'POST'});
+        await loadDashboard();
+    }
+
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+        await fetch('/api/admin/logout', {method: 'POST'});
+        window.location.href = '/admin';
+    });
+
+    checkAuth();
+    loadDashboard();
+    </script>
+</body>
+</html>

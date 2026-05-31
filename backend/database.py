@@ -68,6 +68,12 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT NOT NULL,
             name TEXT,
+            age TEXT,
+            gender TEXT,
+            school TEXT,
+            academic_stage TEXT,
+            graduation_time TEXT,
+            subscribe_companies TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -97,7 +103,24 @@ def init_db():
             details TEXT,
             scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_id INTEGER NOT NULL REFERENCES intern_programs(id) ON DELETE CASCADE,
+            alert_type TEXT NOT NULL CHECK(alert_type IN ('early_open', 'prediction_miss', 'now_open', 'closing_soon')),
+            message TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
+
+    # ─── Migration: add new subscriber fields for existing databases ───
+    migration_cols = ["age", "gender", "school", "academic_stage", "graduation_time", "subscribe_companies"]
+    for col in migration_cols:
+        try:
+            cursor.execute(f"ALTER TABLE subscribers ADD COLUMN {col} TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     conn.commit()
     conn.close()

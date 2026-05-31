@@ -16,6 +16,45 @@
             <input type="text" id="name" name="name" placeholder="Your name">
         </div>
 
+        <div class="form-row">
+            <div class="form-group form-group-half">
+                <label for="age">年龄 *</label>
+                <input type="number" id="age" name="age" required placeholder="如 22" min="16" max="60">
+            </div>
+            <div class="form-group form-group-half">
+                <label for="gender">性别 *</label>
+                <select id="gender" name="gender" required>
+                    <option value="">请选择</option>
+                    <option value="男">男</option>
+                    <option value="女">女</option>
+                    <option value="其他">其他</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="school">学校 *</label>
+            <input type="text" id="school" name="school" required placeholder="如 北京大学">
+        </div>
+
+        <div class="form-row">
+            <div class="form-group form-group-half">
+                <label for="academic_stage">学业阶段 *</label>
+                <select id="academic_stage" name="academic_stage" required>
+                    <option value="">请选择</option>
+                    <option value="本科">本科</option>
+                    <option value="硕士">硕士</option>
+                    <option value="博士">博士</option>
+                    <option value="MBA">MBA</option>
+                    <option value="其他">其他</option>
+                </select>
+            </div>
+            <div class="form-group form-group-half">
+                <label for="graduation_time">毕业时间 *</label>
+                <input type="month" id="graduation_time" name="graduation_time" required>
+            </div>
+        </div>
+
         <div class="form-group">
             <label>Select Companies</label>
             <div class="checkbox-group company-checkboxes">
@@ -61,10 +100,10 @@
     </form>
 </section>
 
-<section class="section" style="margin-top: 40px; padding-top: 30px; border-top: 1px solid var(--border);">
-    <h2>管理员工具</h2>
-    <p class="section-desc">导出所有订阅用户数据为 Excel 文件。</p>
-    <a href="/api/export" class="btn-secondary" style="display: inline-block; margin-top: 10px;">下载用户数据 (Excel)</a>
+<section class="section" style="margin-top: 40px; padding-top: 30px; border-top: 1px solid var(--border); text-align: center;">
+    <h2>管理员入口</h2>
+    <p class="section-desc">独立管理后台 · 用户数据已加密存储</p>
+    <a href="/admin" class="btn-primary" style="display: inline-block; text-decoration: none;">进入管理后台</a>
 </section>
 
 {% endblock %}
@@ -96,18 +135,6 @@ document.getElementById('subscribe-form').addEventListener('submit', async funct
     }
     btn.disabled = false;
     btn.textContent = 'Subscribe';
-});
-
-// Select all toggles
-document.getElementById('select-all-companies').addEventListener('change', function() {
-    document.querySelectorAll('.company-checkboxes input[name="company_ids"]').forEach(cb => {
-        cb.checked = this.checked;
-    });
-});
-document.getElementById('select-all-roles').addEventListener('change', function() {
-    document.querySelectorAll('input[name="role_types"]').forEach(cb => {
-        cb.checked = this.checked;
-    });
 });
 </script>
 {% endblock %}

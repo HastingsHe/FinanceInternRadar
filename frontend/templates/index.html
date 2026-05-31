@@ -21,6 +21,17 @@
     </div>
 </section>
 
+{% if early_alerts %}
+<section class="section" style="padding-top: 0;">
+    <div style="background: linear-gradient(135deg, #fff3cd, #ffeaa7); border: 2px solid #f39c12; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="color: #e67e22; margin: 0 0 8px 0;">提前开放预警</h3>
+        {% for alert in early_alerts %}
+        <p style="color: #856404; margin: 4px 0; font-size: 14px;">{{ alert.message }}</p>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
 <section class="section timeline-section">
     <h2>Upcoming Opening Timeline <span class="badge">US</span></h2>
     <div class="timeline">

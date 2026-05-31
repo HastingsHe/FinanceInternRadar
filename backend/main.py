@@ -6,6 +6,7 @@ FastAPI backend serving the web interface and API endpoints.
 import os
 import sys
 import sqlite3
+import hashlib
 from datetime import datetime, date
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from database import init_db, get_db
 from predictor import generate_all_predictions, get_company_predictions
 from recommender import get_today_picks
+from crypto_utils import encrypt, decrypt
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +64,23 @@ def format_date(value, fmt="%b %d, %Y"):
 templates.env.filters["format_date"] = format_date
 
 
+# ─── Admin Auth ──────────────────────────────────────────────
+ADMIN_USERNAME = "admin123"
+ADMIN_PASSWORD = "Harry071115!"
+ADMIN_SALT = "radar_intern_2026_fir"
+
+def _admin_hash(pw: str) -> str:
+    return hashlib.sha256((ADMIN_USERNAME + ":" + pw + ADMIN_SALT).encode()).hexdigest()
+
+def verify_admin(request: Request) -> bool:
+    token = request.cookies.get("admin_token", "")
+    return token == _admin_hash(ADMIN_PASSWORD)
+
+def require_admin(request: Request):
+    if not verify_admin(request):
+        raise HTTPException(status_code=401, detail="Admin authentication required")
+
+
 # ─── Page Routes ───────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -78,6 +97,16 @@ async def index(request: Request):
     conn = get_db()
     total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     total_programs = conn.execute("SELECT COUNT(*) FROM intern_programs WHERE year=2026").fetchone()[0]
+
+    # Early opening alerts (for banner)
+    today_str = date.today().isoformat()
+    early_alerts = conn.execute("""
+        SELECT a.message, a.created_at
+        FROM alerts a
+        WHERE a.alert_type = 'early_open' AND a.is_read = 0
+        ORDER BY a.created_at DESC
+        LIMIT 5
+    """).fetchall()
     conn.close()
 
     return templates.TemplateResponse("index.html", {
@@ -87,6 +116,7 @@ async def index(request: Request):
         "picks": picks,
         "total_companies": total_companies,
         "total_programs": total_programs,
+        "early_alerts": early_alerts,
         "today": date.today(),
     })
 
@@ -219,30 +249,70 @@ async def subscribe_page(request: Request):
     })
 
 
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_login_page(request: Request):
+    """Dedicated admin login page."""
+    # Already logged in? redirect to dashboard
+    if verify_admin(request):
+        return RedirectResponse("/admin/dashboard", status_code=302)
+    return templates.TemplateResponse("admin_login.html", {"request": request})
+
+
+@app.get("/admin/dashboard", response_class=HTMLResponse)
+async def admin_dashboard_page(request: Request):
+    """Admin dashboard — user data, program management, alerts."""
+    require_admin(request)
+    return templates.TemplateResponse("admin_dashboard.html", {"request": request})
+
+
 # ─── API Endpoints ─────────────────────────────────────────
 
 @app.post("/api/subscribe")
 async def api_subscribe(request: Request):
-    """Subscribe to alerts."""
+    """Subscribe to alerts. All PII fields are encrypted at rest."""
     form_data = await request.form()
     email = form_data.get("email", "")
     name = form_data.get("name", "")
+    age = form_data.get("age", "")
+    gender = form_data.get("gender", "")
+    school = form_data.get("school", "")
+    academic_stage = form_data.get("academic_stage", "")
+    graduation_time = form_data.get("graduation_time", "")
     company_ids = form_data.getlist("company_ids")
     role_types = form_data.getlist("role_types")
     region = form_data.get("region", "all")
     conn = get_db()
 
-    # Upsert subscriber
-    cursor = conn.execute("SELECT id FROM subscribers WHERE email = ?", (email,))
+    # Encrypt all PII before storage
+    encrypted_email = encrypt(email) if email else ""
+    encrypted_name = encrypt(name) if name else ""
+    encrypted_age = encrypt(age) if age else ""
+    encrypted_gender = encrypt(gender) if gender else ""
+    encrypted_school = encrypt(school) if school else ""
+    encrypted_academic_stage = encrypt(academic_stage) if academic_stage else ""
+    encrypted_graduation_time = encrypt(graduation_time) if graduation_time else ""
+    encrypted_subscribe_companies = encrypt(",".join(company_ids)) if company_ids else ""
+
+    # Upsert subscriber — lookup by encrypted email
+    cursor = conn.execute("SELECT id FROM subscribers WHERE email = ?", (encrypted_email,))
     existing = cursor.fetchone()
 
     if existing:
         sub_id = existing[0]
-        if name:
-            conn.execute("UPDATE subscribers SET name = ? WHERE id = ?", (name, sub_id))
+        conn.execute("""
+            UPDATE subscribers SET name = ?, age = ?, gender = ?, school = ?,
+                academic_stage = ?, graduation_time = ?, subscribe_companies = ?
+            WHERE id = ?
+        """, (encrypted_name, encrypted_age, encrypted_gender, encrypted_school,
+              encrypted_academic_stage, encrypted_graduation_time,
+              encrypted_subscribe_companies, sub_id))
     else:
         cursor = conn.execute(
-            "INSERT INTO subscribers (email, name) VALUES (?, ?)", (email, name)
+            "INSERT INTO subscribers (email, name, age, gender, school, academic_stage, graduation_time, subscribe_companies) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (encrypted_email, encrypted_name, encrypted_age, encrypted_gender,
+             encrypted_school, encrypted_academic_stage, encrypted_graduation_time,
+             encrypted_subscribe_companies)
         )
         sub_id = cursor.lastrowid
 
@@ -331,8 +401,9 @@ async def api_stats():
 
 
 @app.get("/api/export")
-async def api_export():
-    """Export user data to Excel and return the file."""
+async def api_export(request: Request):
+    """Export user data to Excel (admin only). Decrypts data on export."""
+    require_admin(request)
     from io import BytesIO
     from datetime import datetime
 
@@ -342,18 +413,20 @@ async def api_export():
     # Sheet 1: 订阅用户
     ws = wb.active
     ws.title = "订阅用户"
-    headers = ["ID", "邮箱", "姓名", "注册时间", "订阅公司数", "职位类型"]
+    headers = ["ID", "邮箱", "姓名", "年龄", "性别", "学校", "学业阶段", "毕业时间", "注册时间", "订阅公司数", "职位类型"]
     for c, h in enumerate(headers, 1):
         ws.cell(row=1, column=c, value=h)
     for row_idx, s in enumerate(conn.execute(
-        "SELECT id, email, name, created_at FROM subscribers ORDER BY created_at DESC"
+        "SELECT id, email, name, age, gender, school, academic_stage, graduation_time, created_at FROM subscribers ORDER BY created_at DESC"
     ).fetchall(), 2):
         sid = s[0]
         cnt = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE subscriber_id=?", (sid,)).fetchone()[0]
         roles = [r[0] for r in conn.execute(
             "SELECT DISTINCT role_type FROM subscriptions WHERE subscriber_id=? AND role_type IS NOT NULL", (sid,)
         ).fetchall()]
-        vals = [s[0], s[1], s[2] or "", s[3], cnt, ", ".join(roles) if roles else ""]
+        vals = [s[0], decrypt(s[1]), decrypt(s[2]) or "", decrypt(s[3]) or "", decrypt(s[4]) or "",
+                decrypt(s[5]) or "", decrypt(s[6]) or "", decrypt(s[7]) or "", s[8], cnt,
+                ", ".join(roles) if roles else ""]
         for c, v in enumerate(vals, 1):
             ws.cell(row=row_idx, column=c, value=v)
 
@@ -369,7 +442,8 @@ async def api_export():
         LEFT JOIN companies c ON s.company_id=c.id
         ORDER BY sub.email, c.name
     """).fetchall(), 2):
-        for c, v in enumerate([d[i] or "" for i in range(7)], 1):
+        vals = [d[0], decrypt(d[1]), decrypt(d[2]) or "", d[3], d[4], d[5], d[6] or ""]
+        for c, v in enumerate(vals, 1):
             ws2.cell(row=row_idx, column=c, value=v)
 
     # Sheet 3: 统计
@@ -391,6 +465,221 @@ async def api_export():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=FinanceInternRadar_Users.xlsx"},
     )
+
+
+# ─── Admin API ───────────────────────────────────────────────
+
+@app.get("/api/admin/userdata")
+async def admin_userdata(request: Request):
+    """Return decrypted subscriber data (admin only)."""
+    require_admin(request)
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, email, name, age, gender, school, academic_stage, graduation_time, subscribe_companies, created_at "
+        "FROM subscribers ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        sid = r[0]
+        conn2 = get_db()
+        cnt = conn2.execute("SELECT COUNT(*) FROM subscriptions WHERE subscriber_id=?", (sid,)).fetchone()[0]
+        roles = [x[0] for x in conn2.execute(
+            "SELECT DISTINCT role_type FROM subscriptions WHERE subscriber_id=? AND role_type IS NOT NULL", (sid,)
+        ).fetchall()]
+        conn2.close()
+        result.append({
+            "id": r[0],
+            "email": decrypt(r[1]),
+            "name": decrypt(r[2]) if r[2] else "",
+            "age": decrypt(r[3]) if r[3] else "",
+            "gender": decrypt(r[4]) if r[4] else "",
+            "school": decrypt(r[5]) if r[5] else "",
+            "academic_stage": decrypt(r[6]) if r[6] else "",
+            "graduation_time": decrypt(r[7]) if r[7] else "",
+            "subscribe_companies": decrypt(r[8]) if r[8] else "",
+            "created_at": r[9],
+            "company_count": cnt,
+            "roles": ", ".join(roles) if roles else "",
+        })
+    return JSONResponse(result)
+
+
+@app.post("/api/admin/login")
+async def admin_login(request: Request):
+    data = await request.json()
+    username = data.get("username", "")
+    pw = data.get("password", "")
+    if username == ADMIN_USERNAME and pw == ADMIN_PASSWORD:
+        resp = JSONResponse({"status": "ok"})
+        resp.set_cookie(
+            key="admin_token",
+            value=_admin_hash(ADMIN_PASSWORD),
+            httponly=True,
+            max_age=86400,
+            samesite="lax",
+        )
+        return resp
+    return JSONResponse({"status": "error", "message": "用户名或密码错误"}, status_code=401)
+
+
+@app.post("/api/admin/logout")
+async def admin_logout():
+    resp = JSONResponse({"status": "ok"})
+    resp.delete_cookie("admin_token")
+    return resp
+
+
+@app.get("/api/admin/check")
+async def admin_check(request: Request):
+    return JSONResponse({"authenticated": verify_admin(request)})
+
+
+@app.post("/api/admin/programs/{program_id}/mark-open")
+async def admin_mark_open(program_id: int, request: Request):
+    require_admin(request)
+    data = await request.json()
+    actual_date = data.get("actual_date", date.today().isoformat())
+
+    conn = get_db()
+    prog = conn.execute(
+        "SELECT id, program_name, predicted_open_date, company_id FROM intern_programs WHERE id=?",
+        (program_id,),
+    ).fetchone()
+    if not prog:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    conn.execute(
+        "UPDATE intern_programs SET open_date=?, status='open' WHERE id=?",
+        (actual_date, program_id),
+    )
+
+    is_early = False
+    pred_date = prog["predicted_open_date"]
+    if pred_date and actual_date < pred_date:
+        is_early = True
+        company = conn.execute("SELECT name FROM companies WHERE id=?", (prog["company_id"],)).fetchone()
+        conn.execute(
+            "INSERT INTO alerts (program_id, alert_type, message, is_read) VALUES (?, 'early_open', ?, 0)",
+            (program_id, f"{company['name']} - {prog['program_name']}：预测 {pred_date}，实际 {actual_date}（提前开放！）"),
+        )
+    elif pred_date and actual_date >= pred_date:
+        conn.execute(
+            "INSERT INTO alerts (program_id, alert_type, message, is_read) VALUES (?, 'now_open', ?, 0)",
+            (program_id, f"{prog['program_name']} 已如期开放，实际日期 {actual_date}"),
+        )
+
+    conn.commit()
+    conn.close()
+    return JSONResponse({"status": "ok", "is_early": is_early})
+
+
+@app.post("/api/admin/programs/{program_id}/mark-closed")
+async def admin_mark_closed(program_id: int, request: Request):
+    require_admin(request)
+    conn = get_db()
+    conn.execute("UPDATE intern_programs SET status='closed' WHERE id=?", (program_id,))
+    conn.commit()
+    conn.close()
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/api/admin/alerts")
+async def admin_alerts(request: Request):
+    require_admin(request)
+    conn = get_db()
+    today = date.today().isoformat()
+
+    # Potential early openings: predicted date passed but still upcoming
+    potential = conn.execute("""
+        SELECT ip.id, ip.program_name, c.name as company, ip.predicted_open_date, ip.status
+        FROM intern_programs ip
+        JOIN companies c ON ip.company_id = c.id
+        WHERE ip.predicted_open_date <= ?
+          AND ip.open_date IS NULL
+          AND ip.status = 'upcoming'
+        ORDER BY ip.predicted_open_date
+    """, (today,)).fetchall()
+
+    # Existing alerts
+    alerts = conn.execute("""
+        SELECT a.id, a.program_id, a.alert_type, a.message, a.is_read, a.created_at,
+               ip.program_name, c.name as company
+        FROM alerts a
+        JOIN intern_programs ip ON a.program_id = ip.id
+        JOIN companies c ON ip.company_id = c.id
+        ORDER BY a.created_at DESC
+        LIMIT 50
+    """).fetchall()
+
+    # Programs grouped by status
+    upcoming = conn.execute("""
+        SELECT ip.id, ip.program_name, c.name as company, ip.season, ip.year,
+               ip.predicted_open_date, ip.open_date, ip.status
+        FROM intern_programs ip
+        JOIN companies c ON ip.company_id = c.id
+        WHERE ip.status = 'upcoming'
+        ORDER BY ip.predicted_open_date
+        LIMIT 30
+    """).fetchall()
+
+    opened = conn.execute("""
+        SELECT ip.id, ip.program_name, c.name as company, ip.season, ip.year,
+               ip.predicted_open_date, ip.open_date, ip.status
+        FROM intern_programs ip
+        JOIN companies c ON ip.company_id = c.id
+        WHERE ip.status = 'open'
+        ORDER BY ip.open_date DESC
+    """).fetchall()
+
+    closed = conn.execute("""
+        SELECT ip.id, ip.program_name, c.name as company, ip.season, ip.year,
+               ip.predicted_open_date, ip.open_date, ip.status
+        FROM intern_programs ip
+        JOIN companies c ON ip.company_id = c.id
+        WHERE ip.status = 'closed'
+        ORDER BY ip.open_date DESC
+        LIMIT 30
+    """).fetchall()
+
+    conn.close()
+
+    def p(r):
+        return {
+            "id": r["id"], "program_name": r["program_name"], "company": r["company"],
+            "season": r["season"], "year": r["year"],
+            "predicted_open_date": r["predicted_open_date"], "open_date": r["open_date"],
+            "status": r["status"],
+        }
+
+    return JSONResponse({
+        "potential_early": [
+            {"id": r["id"], "program_name": r["program_name"], "company": r["company"],
+             "predicted_open_date": r["predicted_open_date"], "status": r["status"]}
+            for r in potential
+        ],
+        "alerts": [
+            {"id": r["id"], "program_id": r["program_id"], "alert_type": r["alert_type"],
+             "message": r["message"], "is_read": r["is_read"], "created_at": r["created_at"],
+             "program_name": r["program_name"], "company": r["company"]}
+            for r in alerts
+        ],
+        "upcoming": [p(r) for r in upcoming],
+        "opened": [p(r) for r in opened],
+        "closed": [p(r) for r in closed],
+    })
+
+
+@app.post("/api/admin/alerts/{alert_id}/read")
+async def admin_mark_read(alert_id: int, request: Request):
+    require_admin(request)
+    conn = get_db()
+    conn.execute("UPDATE alerts SET is_read=1 WHERE id=?", (alert_id,))
+    conn.commit()
+    conn.close()
+    return JSONResponse({"status": "ok"})
 
 
 # ─── Run ────────────────────────────────────────────────────
