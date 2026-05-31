@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>管理后台 - FinanceInternRadar</title>
+    <title>Admin Dashboard - FinanceInternRadar</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -253,9 +253,9 @@
     <div class="topbar">
         <div class="brand"><span>&#9651;</span> FinanceInternRadar Admin</div>
         <div class="actions">
-            <span class="badge-auth">已认证</span>
-            <a href="/api/export" class="btn-sm export">导出 Excel</a>
-            <button id="logout-btn" class="btn-sm logout">退出</button>
+            <span class="badge-auth">Authenticated</span>
+            <a href="/api/export" class="btn-sm export">Export Excel</a>
+            <button id="logout-btn" class="btn-sm logout">Logout</button>
         </div>
     </div>
 
@@ -263,33 +263,33 @@
         <div id="alerts-section"></div>
 
         <div class="tab-nav">
-            <button class="active" onclick="switchTab('subscribers')">订阅用户</button>
-            <button onclick="switchTab('programs')">项目管理</button>
-            <button onclick="switchTab('alerts')">预警记录</button>
+            <button class="active" onclick="switchTab('subscribers')">Subscribers</button>
+            <button onclick="switchTab('programs')">Programs</button>
+            <button onclick="switchTab('alerts')">Alerts</button>
         </div>
 
         <!-- Subscribers Tab -->
         <div id="tab-subscribers" class="tab-content active">
             <div class="card">
-                <h2>订阅用户列表 <span class="count" id="subscriber-count">0</span></h2>
+                <h2>Subscriber List <span class="count" id="subscriber-count">0</span></h2>
                 <div style="font-size:12px; color:var(--text-secondary); margin-bottom:14px;">
-                    <span class="encrypted-tag">AES-128 加密存储</span> 所有用户数据加密存储，仅管理员可解密查看
+                    <span class="encrypted-tag">AES-128 Encrypted Storage</span> All user data is encrypted at rest. Decryptable only by admin.
                 </div>
                 <div class="table-wrap">
                     <table>
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>邮箱</th>
-                                <th>姓名</th>
-                                <th>年龄</th>
-                                <th>性别</th>
-                                <th>学校</th>
-                                <th>学业阶段</th>
-                                <th>毕业时间</th>
-                                <th>注册时间</th>
-                                <th>订阅公司数</th>
-                                <th>职位</th>
+                                <th>Email</th>
+                                <th>Name</th>
+                                <th>Age</th>
+                                <th>Gender</th>
+                                <th>School</th>
+                                <th>Academic Stage</th>
+                                <th>Graduation</th>
+                                <th>Registered</th>
+                                <th>Companies</th>
+                                <th>Role</th>
                             </tr>
                         </thead>
                         <tbody id="subscriber-table"></tbody>
@@ -301,8 +301,8 @@
         <!-- Programs Tab -->
         <div id="tab-programs" class="tab-content">
             <div class="card">
-                <h2>项目状态管理</h2>
-                <p style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">标记项目为"已开放"。实际开放日期早于预测时自动生成预警。</p>
+                <h2>Program Status Management</h2>
+                <p style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">Mark programs as "Open". Auto-generates alerts when actual date is earlier than predicted.</p>
                 <div id="program-list" style="max-height:600px; overflow-y:auto;"></div>
             </div>
         </div>
@@ -310,7 +310,7 @@
         <!-- Alerts Tab -->
         <div id="tab-alerts" class="tab-content">
             <div class="card">
-                <h2>预警记录</h2>
+                <h2>Alerts</h2>
                 <div id="alerts-history" style="max-height:500px; overflow-y:auto;"></div>
             </div>
         </div>
@@ -341,7 +341,7 @@
         document.getElementById('subscriber-count').textContent = users.length;
         const tbody = document.getElementById('subscriber-table');
         if (users.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="11" class="none-msg">暂无订阅用户</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="none-msg">No subscribers yet</td></tr>';
         } else {
             tbody.innerHTML = users.map(u => `
                 <tr>
@@ -362,59 +362,59 @@
 
         const alertsDiv = document.getElementById('alerts-section');
         if (admin.potential_early && admin.potential_early.length > 0) {
-            alertsDiv.innerHTML = '<div class="alert-banner"><strong>潜在提前开放预警</strong>' +
+            alertsDiv.innerHTML = '<div class="alert-banner"><strong>Potential Early Opening Alerts</strong>' +
                 admin.potential_early.map(p =>
-                    `<span>${p.company} - ${p.program_name}（预测 ${p.predicted_open_date}）</span>`
+                    `<span>${p.company} - ${p.program_name}（Predicted ${p.predicted_open_date}）</span>`
                 ).join('<br>') + '</div>';
         } else { alertsDiv.innerHTML = ''; }
 
         const progDiv = document.getElementById('program-list');
         let html = '';
         if (admin.upcoming && admin.upcoming.length > 0) {
-            html += '<div class="section-label upcoming">待开放 (' + admin.upcoming.length + ')</div>';
+            html += '<div class="section-label upcoming">Upcoming (' + admin.upcoming.length + ')</div>';
             html += admin.upcoming.map(p =>
                 `<div class="prog-row">
-                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">预测 ${p.predicted_open_date || 'N/A'}</span></div>
+                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">Predicted ${p.predicted_open_date || 'N/A'}</span></div>
                     <div class="opts">
                         <input type="date" id="date-${p.id}" value="${new Date().toISOString().split('T')[0]}">
-                        <button onclick="markOpen(${p.id})" class="btn-sm green">已开放</button>
+                        <button onclick="markOpen(${p.id})" class="btn-sm green">Open</button>
                     </div>
                 </div>`
             ).join('');
         }
         if (admin.opened && admin.opened.length > 0) {
-            html += '<div class="section-label opened" style="margin-top:16px;">已开放 (' + admin.opened.length + ')</div>';
+            html += '<div class="section-label opened" style="margin-top:16px;">Open (' + admin.opened.length + ')</div>';
             html += admin.opened.map(p =>
                 `<div class="prog-row">
-                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">实际 ${p.open_date}</span></div>
-                    <div class="opts"><button onclick="markClosed(${p.id})" class="btn-sm grey">已关闭</button></div>
+                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">Actual ${p.open_date}</span></div>
+                    <div class="opts"><button onclick="markClosed(${p.id})" class="btn-sm grey">Closed</button></div>
                 </div>`
             ).join('');
         }
         if (admin.closed && admin.closed.length > 0) {
-            html += '<div class="section-label closed" style="margin-top:16px;">已关闭 (' + admin.closed.length + ')</div>';
+            html += '<div class="section-label closed" style="margin-top:16px;">Closed (' + admin.closed.length + ')</div>';
             html += admin.closed.map(p =>
                 `<div class="prog-row">
-                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">开放 ${p.open_date}</span></div>
+                    <div class="info"><strong>${p.company}</strong> - ${p.program_name} <span class="meta">Opened ${p.open_date}</span></div>
                 </div>`
             ).join('');
         }
-        progDiv.innerHTML = html || '<span class="none-msg">暂无项目</span>';
+        progDiv.innerHTML = html || '<span class="none-msg">No programs found</span>';
 
         const histDiv = document.getElementById('alerts-history');
         if (admin.alerts && admin.alerts.length > 0) {
             histDiv.innerHTML = admin.alerts.map(a => {
                 const rowClass = a.is_read ? 'read' : 'unread';
                 const tagHtml = a.alert_type === 'early_open'
-                    ? '<span class="alert-tag early">提前开放</span>'
-                    : '<span class="alert-tag normal">如期开放</span>';
+                    ? '<span class="alert-tag early">Early</span>'
+                    : '<span class="alert-tag normal">On Time</span>';
                 return `<div class="alert-row ${rowClass}">
                     <span>${tagHtml} ${a.message}</span>
                     <span style="font-size:11px; color:#94a3b8;">${a.created_at || ''}</span>
                 </div>`;
             }).join('');
         } else {
-            histDiv.innerHTML = '<span class="none-msg">暂无预警记录</span>';
+            histDiv.innerHTML = '<span class="none-msg">No alert history</span>';
         }
     }
 

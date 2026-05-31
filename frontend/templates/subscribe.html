@@ -18,39 +18,39 @@
 
         <div class="form-row">
             <div class="form-group form-group-half">
-                <label for="age">年龄 *</label>
-                <input type="number" id="age" name="age" required placeholder="如 22" min="16" max="60">
+                <label for="age">Age *</label>
+                <input type="number" id="age" name="age" required placeholder="e.g. 22" min="16" max="60">
             </div>
             <div class="form-group form-group-half">
-                <label for="gender">性别 *</label>
+                <label for="gender">Gender *</label>
                 <select id="gender" name="gender" required>
-                    <option value="">请选择</option>
-                    <option value="男">男</option>
-                    <option value="女">女</option>
-                    <option value="其他">其他</option>
+                    <option value="">Please select</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
                 </select>
             </div>
         </div>
 
         <div class="form-group">
-            <label for="school">学校 *</label>
-            <input type="text" id="school" name="school" required placeholder="如 北京大学">
+            <label for="school">School *</label>
+            <input type="text" id="school" name="school" required placeholder="e.g. Peking University">
         </div>
 
         <div class="form-row">
             <div class="form-group form-group-half">
-                <label for="academic_stage">学业阶段 *</label>
+                <label for="academic_stage">Academic Stage *</label>
                 <select id="academic_stage" name="academic_stage" required>
-                    <option value="">请选择</option>
-                    <option value="本科">本科</option>
-                    <option value="硕士">硕士</option>
-                    <option value="博士">博士</option>
+                    <option value="">Please select</option>
+                    <option value="Bachelor">Bachelor</option>
+                    <option value="Master">Master</option>
+                    <option value="PhD">PhD</option>
                     <option value="MBA">MBA</option>
-                    <option value="其他">其他</option>
+                    <option value="Other">Other</option>
                 </select>
             </div>
             <div class="form-group form-group-half">
-                <label for="graduation_time">毕业时间 *</label>
+                <label for="graduation_time">Graduation Date *</label>
                 <input type="month" id="graduation_time" name="graduation_time" required>
             </div>
         </div>
@@ -92,10 +92,10 @@
                 <option value="all">All Regions</option>
                 <option value="US">US Only</option>
                 <option value="UK">UK Only</option>
-                <option value="CN">中国大陆 (CN)</option>
-                <option value="EU">欧洲 (EU)</option>
-                <option value="HK">香港 (HK)</option>
-                <option value="AU">澳洲 (AU)</option>
+                <option value="CN">Mainland China (CN)</option>
+                <option value="EU">Europe (EU)</option>
+                <option value="HK">Hong Kong (HK)</option>
+                <option value="AU">Australia (AU)</option>
             </select>
         </div>
 
@@ -105,9 +105,9 @@
 </section>
 
 <section class="section" style="margin-top: 40px; padding-top: 30px; border-top: 1px solid var(--border); text-align: center;">
-    <h2>管理员入口</h2>
-    <p class="section-desc">独立管理后台 · 用户数据已加密存储</p>
-    <a href="/admin" class="btn-primary" style="display: inline-block; text-decoration: none;">进入管理后台</a>
+    <h2>Admin Portal</h2>
+    <p class="section-desc">Standalone admin dashboard · User data encrypted at rest</p>
+    <a href="/admin" class="btn-primary" style="display: inline-block; text-decoration: none;">Enter Admin Dashboard</a>
 </section>
 
 {% endblock %}

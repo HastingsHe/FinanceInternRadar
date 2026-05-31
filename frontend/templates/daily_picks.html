@@ -11,8 +11,13 @@
 
     <div class="picks-grid picks-grid-large">
         {% for pick in picks %}
-        <div class="pick-card pick-card-detailed">
-            <div class="pick-category">{{ pick.category }}</div>
+        <div class="pick-card pick-card-detailed{% if pick.has_new_positions or pick.is_fintech %} pick-card-featured{% endif %}">
+            <div class="pick-category">
+                {{ pick.category }}
+                {% if pick.is_fintech %}<span class="badge badge-fintech">FinTech</span>{% endif %}
+                {% if pick.has_new_positions %}<span class="badge badge-new">NEW</span>{% endif %}
+                {% if pick.is_recently_added and not pick.is_fintech %}<span class="badge badge-new">NEW</span>{% endif %}
+            </div>
             <h3>{{ pick.name }}</h3>
             <p class="pick-desc">{{ pick.description }}</p>
             <div class="pick-reason-box">

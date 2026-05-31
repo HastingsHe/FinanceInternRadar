@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -109,21 +109,21 @@
 <body>
     <div class="login-card">
         <div class="logo">FinanceInternRadar</div>
-        <p class="subtitle">用户数据管理 · 管理员登录</p>
+        <p class="subtitle">User Data Management · Admin Login</p>
 
         <div class="form-group">
-            <label for="admin-username">用户名</label>
-            <input type="text" id="admin-username" placeholder="输入管理员用户名" autocomplete="username">
+            <label for="admin-username">Username</label>
+            <input type="text" id="admin-username" placeholder="Enter admin username" autocomplete="username">
         </div>
 
         <div class="form-group">
-            <label for="admin-password">密码</label>
-            <input type="password" id="admin-password" placeholder="输入管理员密码" autocomplete="current-password">
+            <label for="admin-password">Password</label>
+            <input type="password" id="admin-password" placeholder="Enter admin password" autocomplete="current-password">
         </div>
 
-        <button class="btn-login" id="login-btn">登录</button>
+        <button class="btn-login" id="login-btn">Login</button>
         <div class="error-msg" id="login-error"></div>
-        <a href="/" class="back-link">返回首页</a>
+        <a href="/" class="back-link">Back to Home</a>
     </div>
 
     <script>
@@ -134,7 +134,7 @@
         errorEl.textContent = '';
 
         if (!username || !password) {
-            errorEl.textContent = '请输入用户名和密码';
+            errorEl.textContent = 'Please enter username and password';
             return;
         }
 
@@ -148,7 +148,7 @@
             window.location.href = '/admin/dashboard';
         } else {
             const data = await resp.json();
-            errorEl.textContent = data.message || '登录失败';
+            errorEl.textContent = data.message || 'Login failed';
         }
     });
 

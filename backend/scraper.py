@@ -1,11 +1,13 @@
 """
 FinanceInternRadar - Scraper Engine
 Uses httpx + BeautifulSoup to scrape careers pages for new job positions.
+Enhanced with FinTech startup sources and job board aggregation.
 """
 
 import sqlite3
 import os
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timezone, timedelta
 import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "radar.db")
@@ -20,6 +22,77 @@ try:
     from bs4 import BeautifulSoup
 except ImportError:
     BeautifulSoup = None
+
+# ─── FinTech Startup Sources ───
+# Career pages of notable FinTech startups
+
+FINTECH_STARTUPS = [
+    # US FinTech
+    ("Stripe", "US", "https://stripe.com/jobs/search?q=intern", "FinTech",
+     "Online payment processing platform, valued at $65B+"),
+    ("Plaid", "US", "https://plaid.com/careers/", "FinTech",
+     "Financial data connectivity platform connecting apps to bank accounts"),
+    ("Chime", "US", "https://www.chime.com/careers/", "FinTech",
+     "Neobank with 20M+ users, no-fee mobile banking"),
+    ("Robinhood", "US", "https://careers.robinhood.com/", "FinTech",
+     "Commission-free trading platform, democratizing finance"),
+    ("Coinbase", "US", "https://www.coinbase.com/careers/positions", "FinTech",
+     "Largest US cryptocurrency exchange, publicly traded"),
+    ("Ripple", "US", "https://ripple.com/careers/", "FinTech",
+     "Enterprise blockchain and crypto solutions for cross-border payments"),
+    ("Brex", "US", "https://www.brex.com/careers/", "FinTech",
+     "Corporate credit card and spend management for startups"),
+    ("Affirm", "US", "https://www.affirm.com/careers", "FinTech",
+     "Buy-now-pay-later fintech, publicly traded"),
+    ("SoFi", "US", "https://www.sofi.com/careers/", "FinTech",
+     "All-in-one personal finance platform (banking, investing, lending)"),
+
+    # UK/Europe FinTech
+    ("Revolut", "UK", "https://www.revolut.com/careers/", "FinTech",
+     "Global neobank and financial super-app with 45M+ customers"),
+    ("Monzo", "UK", "https://monzo.com/careers/", "FinTech",
+     "UK digital challenger bank with distinctive coral cards"),
+    ("Klarna", "EU", "https://www.klarna.com/careers/", "FinTech",
+     "Swedish BNPL giant, one of Europe's most valuable fintechs"),
+    ("Wise", "UK", "https://www.wise.jobs/", "FinTech",
+     "International money transfer at real exchange rate, publicly traded"),
+    ("Checkout.com", "UK", "https://www.checkout.com/careers", "FinTech",
+     "Global payment processing platform, valued at $40B"),
+    ("Adyen", "EU", "https://www.adyen.com/careers", "FinTech",
+     "Dutch payment company powering payments for Netflix, Spotify, Uber"),
+
+    # Asia-Pacific FinTech
+    ("Airwallex", "AU", "https://www.airwallex.com/careers", "FinTech",
+     "Cross-border payments and financial infrastructure for businesses"),
+    ("Afterpay", "AU", "https://www.afterpay.com/careers", "FinTech",
+     "Australian BNPL pioneer, acquired by Block (Square)"),
+]
+
+# FinTech job boards and aggregators
+FINTECH_JOB_BOARDS = [
+    {
+        "name": "Otta (FinTech filter)",
+        "url": "https://otta.com/jobs/fintech",
+        "region": "US",
+        "type": "aggregator",
+    },
+    {
+        "name": "Built In NYC FinTech",
+        "url": "https://www.builtinnyc.com/jobs/fintech",
+        "region": "US",
+        "type": "aggregator",
+    },
+    {
+        "name": "TrueUp FinTech Jobs",
+        "url": "https://www.trueup.io/jobs?q=fintech+intern",
+        "region": "US",
+        "type": "aggregator",
+    },
+]
+
+# Lever / Greenhouse API patterns used by many FinTech startups
+LEVER_API_PATTERN = "{base}/.json"
+GREENHOUSE_API_PATTERN = "{base}/jobs.json"
 
 
 def get_db():
@@ -207,17 +280,262 @@ class ScraperEngine:
         self.conn.commit()
         return new_count
 
+    # ─── FinTech Startup Methods ───
+
+    def ensure_fintech_companies(self):
+        """Ensure all FinTech startup companies exist in the companies table."""
+        now = datetime.now().isoformat()
+        added = 0
+
+        for name, region, url, category, desc in FINTECH_STARTUPS:
+            existing = self.conn.execute(
+                "SELECT id FROM companies WHERE name = ?", (name,)
+            ).fetchone()
+            if existing:
+                continue
+
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """INSERT INTO companies (name, region, category, description, website, careers_url, is_featured)
+                   VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                (name, region, category, desc, url, url)
+            )
+            company_id = cursor.lastrowid
+
+            # Also add as scraping source
+            cursor.execute(
+                "INSERT INTO scraping_sources (company_id, source_url, source_type, region, is_active) VALUES (?, ?, 'careers_page', ?, 1)",
+                (company_id, url, region)
+            )
+
+            added += 1
+
+        if added:
+            self.conn.commit()
+        return added
+
+    def scrape_fintech_careers(self):
+        """Scrape FinTech startup career pages. Many use Lever/Greenhouse ATS."""
+        if httpx is None or BeautifulSoup is None:
+            return [], "Dependencies not installed"
+
+        all_listings = []
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/html,application/xhtml+xml",
+        }
+
+        for name, region, url, category, desc in FINTECH_STARTUPS:
+            listings = []
+
+            # Try Lever API first (many FinTechs use Lever)
+            if "lever.co" in url or "/jobs" in url:
+                try:
+                    # Try common API patterns
+                    for api_url in [
+                        url.rstrip("/") + "/.json" if "lever.co" in url else None,
+                        url.rstrip("/") + "/jobs.json" if "greenhouse.io" in url else None,
+                    ]:
+                        if api_url is None:
+                            continue
+                        try:
+                            resp = httpx.get(api_url, headers=headers, timeout=10, follow_redirects=True)
+                            if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+                                data = resp.json()
+                                for job in (data if isinstance(data, list) else data.get("postings", data.get("jobs", []))):
+                                    title = job.get("text", job.get("title", ""))
+                                    if not title:
+                                        continue
+                                    if any(kw in title.lower() for kw in ["intern", "graduate", "campus", "new grad", "entry"]):
+                                        job_url = job.get("hostedUrl", job.get("applyUrl", job.get("url", "")))
+                                        listings.append({
+                                            "title": title,
+                                            "snippet": f"{name} - {title}",
+                                            "url": job_url,
+                                            "job_type": self.classify_job_type(title),
+                                            "location": job.get("categories", {}).get("location", "") if isinstance(job.get("categories"), dict) else "",
+                                            "posted_date": datetime.now().strftime("%Y-%m-%d"),
+                                        })
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            # Fall back to HTML scraping
+            if not listings:
+                try:
+                    html_listings, _ = self.scrape_careers_page(url, timeout=10)
+                    if html_listings:
+                        for item in html_listings:
+                            title = item.get("title", "")
+                            # Filter for intern/new grad
+                            if any(kw in title.lower() for kw in ["intern", "graduate", "campus", "new grad", "entry"]):
+                                item["job_type"] = self.classify_job_type(title)
+                                item["posted_date"] = datetime.now().strftime("%Y-%m-%d")
+                                listings.append(item)
+                except Exception:
+                    pass
+
+            if listings:
+                all_listings.append({
+                    "company_name": name,
+                    "region": region,
+                    "listings": listings,
+                })
+
+        return all_listings
+
+    def scrape_job_boards(self):
+        """Scrape FinTech-focused job board aggregators for intern positions."""
+        if httpx is None or BeautifulSoup is None:
+            return [], "Dependencies not installed"
+
+        all_listings = []
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml",
+        }
+
+        for board in FINTECH_JOB_BOARDS:
+            try:
+                resp = httpx.get(board["url"], headers=headers, timeout=15, follow_redirects=True)
+                resp.raise_for_status()
+            except Exception:
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Look for job cards/listings
+            job_elements = soup.select(
+                "div[class*='job-card'], div[class*='JobCard'], "
+                "li[class*='job'], a[class*='job'], "
+                "div[class*='opportunity'], "
+                "div[class*='position'], div[class*='listing']"
+            )
+
+            for elem in job_elements[:30]:
+                text = elem.get_text(" ", strip=True)
+                if not text or len(text) < 10:
+                    continue
+
+                link = None
+                if elem.name == "a" and elem.get("href"):
+                    link = elem.get("href")
+                else:
+                    a_tag = elem.find("a")
+                    if a_tag and a_tag.get("href"):
+                        link = a_tag.get("href")
+
+                if link and not link.startswith("http"):
+                    from urllib.parse import urljoin
+                    link = urljoin(board["url"], link)
+
+                title = text[:200]
+                if any(kw in title.lower() for kw in ["intern", "graduate", "campus", "new grad", "entry"]):
+                    all_listings.append({
+                        "title": title,
+                        "snippet": text[:500],
+                        "url": link,
+                        "region": board["region"],
+                        "source_name": board["name"],
+                        "job_type": self.classify_job_type(title),
+                        "posted_date": datetime.now().strftime("%Y-%m-%d"),
+                    })
+
+        return all_listings
+
+    def _save_fintech_listings(self, fintech_results):
+        """Save FinTech-scraped listings into the database."""
+        now = datetime.now().isoformat()
+        total_new = 0
+
+        for result in fintech_results:
+            company_name = result["company_name"]
+            region = result["region"]
+            listings = result["listings"]
+
+            # Find or create the company's scraping source
+            company = self.conn.execute(
+                "SELECT id FROM companies WHERE name = ?", (company_name,)
+            ).fetchone()
+            if not company:
+                continue
+
+            # Get or create scraping source
+            source = self.conn.execute(
+                "SELECT id FROM scraping_sources WHERE company_id = ? AND source_type = 'careers_page'",
+                (company["id"],)
+            ).fetchone()
+
+            if not source:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO scraping_sources (company_id, source_url, source_type, region, is_active) VALUES (?, '', 'careers_page', ?, 1)",
+                    (company["id"], region)
+                )
+                source_id = cursor.lastrowid
+                self.conn.commit()
+            else:
+                source_id = source["id"]
+
+            for item in listings:
+                title = item.get("title", "Unknown Position")
+                job_type = item.get("job_type", "intern")
+                posted_date = item.get("posted_date", datetime.now().strftime("%Y-%m-%d"))
+                external_url = item.get("url", "")
+
+                existing = self.conn.execute(
+                    "SELECT id FROM scraped_positions WHERE source_id = ? AND title = ? AND posted_date = ?",
+                    (source_id, title, posted_date)
+                ).fetchone()
+                if existing:
+                    continue
+
+                try:
+                    self.conn.execute(
+                        """INSERT INTO scraped_positions
+                           (source_id, title, job_type, location, region, posted_date, external_url, description_snippet, is_new, scraped_at)
+                           VALUES (?,?,?,?,?,?,?,?,1,?)""",
+                        (source_id, title, job_type, "", region, posted_date, external_url, title[:500], now)
+                    )
+                    total_new += 1
+                except sqlite3.IntegrityError:
+                    continue
+
+        if total_new > 0:
+            self.conn.commit()
+        return total_new
+
     # ─── Main Scrape All ───
 
     def scrape_all(self):
-        """Scrape all active sources and return summary."""
-        sources = self.get_active_sources()
+        """Scrape all active sources and return summary.
+        Now includes FinTech startup career pages and job board aggregators.
+        """
         results = []
+        total_new_positions = 0
 
+        # Phase 1: Ensure FinTech companies exist in DB
+        fintech_added = self.ensure_fintech_companies()
+
+        # Phase 2: Scrape existing sources (traditional finance companies)
+        sources = self.get_active_sources()
         for src in sources:
             src_id = src["id"]
             company_name = src["company_name"]
             source_url = src.get("source_url", "")
+
+            # Skip FinTech companies here — they get scraped via dedicated method
+            if src.get("company_region") and src.get("company_name") in [s[0] for s in FINTECH_STARTUPS]:
+                continue
 
             if not source_url:
                 self.update_source_status(src_id, "skipped", "No URL configured")
@@ -227,6 +545,7 @@ class ScraperEngine:
                     "status": "skipped",
                     "details": "No URL configured",
                     "new_positions": 0,
+                    "source_type": "traditional",
                 })
                 continue
 
@@ -240,10 +559,12 @@ class ScraperEngine:
                         "status": "failed",
                         "details": msg,
                         "new_positions": 0,
+                        "source_type": "traditional",
                     })
                     continue
 
                 new_count = self.save_positions(src_id, listings, src.get("company_region", "US"))
+                total_new_positions += new_count
                 status_detail = f"Scraped {len(listings)} listings, {new_count} new"
                 self.update_source_status(src_id, "success", status_detail)
                 results.append({
@@ -252,6 +573,7 @@ class ScraperEngine:
                     "status": "success",
                     "details": status_detail,
                     "new_positions": new_count,
+                    "source_type": "traditional",
                 })
             except Exception as e:
                 self.update_source_status(src_id, "failed", str(e))
@@ -261,8 +583,109 @@ class ScraperEngine:
                     "status": "failed",
                     "details": str(e),
                     "new_positions": 0,
+                    "source_type": "traditional",
                 })
 
+        # Phase 3: Scrape FinTech startup career pages
+        try:
+            fintech_results = self.scrape_fintech_careers()
+            fintech_new = self._save_fintech_listings(fintech_results)
+            total_new_positions += fintech_new
+            results.append({
+                "company": "FinTech Startups (aggregate)",
+                "source_id": None,
+                "status": "success",
+                "details": f"Scraped {len(fintech_results)} FinTech companies, {fintech_new} new positions",
+                "new_positions": fintech_new,
+                "source_type": "fintech_startup",
+            })
+        except Exception as e:
+            results.append({
+                "company": "FinTech Startups (aggregate)",
+                "source_id": None,
+                "status": "failed",
+                "details": str(e),
+                "new_positions": 0,
+                "source_type": "fintech_startup",
+            })
+
+        # Phase 4: Scrape job board aggregators
+        try:
+            board_listings = self.scrape_job_boards()
+            board_count = len(board_listings)
+            if board_listings and board_count > 0:
+                # Save job board listings under a virtual "FinTech Job Boards" source
+                # First ensure a virtual source exists
+                virtual_source = self.conn.execute(
+                    "SELECT id FROM scraping_sources WHERE source_type = 'careers_page' AND source_url LIKE '%aggregator%' LIMIT 1"
+                ).fetchone()
+                if not virtual_source:
+                    # Use first FinTech company as anchor
+                    first_fintech = self.conn.execute(
+                        "SELECT id FROM companies WHERE category = 'FinTech' LIMIT 1"
+                    ).fetchone()
+                    if first_fintech:
+                        cursor = self.conn.cursor()
+                        cursor.execute(
+                            "INSERT INTO scraping_sources (company_id, source_url, source_type, region, is_active) VALUES (?, 'aggregator://fintech-boards', 'careers_page', 'US', 1)",
+                            (first_fintech["id"],)
+                        )
+                        virtual_id = cursor.lastrowid
+                        self.conn.commit()
+                    else:
+                        virtual_id = None
+                else:
+                    virtual_id = virtual_source["id"]
+
+                if virtual_id:
+                    board_new = self.save_positions(virtual_id, board_listings, "US")
+                    total_new_positions += board_new
+                    results.append({
+                        "company": "FinTech Job Boards",
+                        "source_id": virtual_id,
+                        "status": "success",
+                        "details": f"Scraped {board_count} listings, {board_new} new",
+                        "new_positions": board_new,
+                        "source_type": "job_board",
+                    })
+                else:
+                    results.append({
+                        "company": "FinTech Job Boards",
+                        "source_id": None,
+                        "status": "skipped",
+                        "details": "No FinTech companies in DB to anchor",
+                        "new_positions": 0,
+                        "source_type": "job_board",
+                    })
+            else:
+                results.append({
+                    "company": "FinTech Job Boards",
+                    "source_id": None,
+                    "status": "skipped",
+                    "details": "No listings found",
+                    "new_positions": 0,
+                    "source_type": "job_board",
+                })
+        except Exception as e:
+            results.append({
+                "company": "FinTech Job Boards",
+                "source_id": None,
+                "status": "failed",
+                "details": str(e),
+                "new_positions": 0,
+                "source_type": "job_board",
+            })
+
+        # Summary
+        results.insert(0, {
+            "company": "__SUMMARY__",
+            "source_id": None,
+            "status": "summary",
+            "details": "Total new positions across all sources",
+            "new_positions": total_new_positions,
+            "source_type": "summary",
+            "fintech_companies_added": fintech_added,
+        })
         return results
 
     # ─── Query Methods ───

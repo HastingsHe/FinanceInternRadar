@@ -35,10 +35,10 @@ ADMIN_PASSWORD = os.environ.get("RADAR_ADMIN_PASS", "radaradmin2024")
 
 ALL_REGIONS = ["US", "UK", "CN", "EU", "HK", "AU"]
 ALL_JOB_TYPES = [
-    ("intern", "实习"),
-    ("full-time", "全职"),
-    ("graduate", "校招/毕业生项目"),
-    ("management_trainee", "管培生"),
+    ("intern", "Intern"),
+    ("full-time", "Full-Time"),
+    ("graduate", "Graduate"),
+    ("management_trainee", "Management Trainee"),
 ]
 ROLE_TYPES = [
     "Investment Banking", "Sales & Trading", "Quant", "Research",
@@ -56,12 +56,37 @@ async def lifespan(app: FastAPI):
     if count == 0:
         seed()
         generate_all_predictions(2026)
+        # On first deploy, also seed FinTech companies and run initial scrape
+        try:
+            from scraper import get_engine
+            engine = get_engine()
+            fintech_added = engine.ensure_fintech_companies()
+            if fintech_added > 0:
+                print(f"[Lifespan] Added {fintech_added} FinTech startup companies")
+            # Run initial scrape to populate scraped_positions
+            results = engine.scrape_all()
+            new_pos = sum(r.get("new_positions", 0) for r in results)
+            print(f"[Lifespan] Initial scrape complete: {new_pos} new positions found")
+            engine.close()
+        except Exception as e:
+            print(f"[Lifespan] Initial scrape warning (non-fatal): {e}")
+    else:
+        # Ensure FinTech companies exist even on subsequent deploys
+        try:
+            from scraper import get_engine
+            engine = get_engine()
+            fintech_added = engine.ensure_fintech_companies()
+            if fintech_added > 0:
+                print(f"[Lifespan] Added {fintech_added} new FinTech companies")
+            engine.close()
+        except Exception as e:
+            print(f"[Lifespan] FinTech seeding warning (non-fatal): {e}")
     get_scheduler().start()
     yield
     get_scheduler().stop()
 
 
-app = FastAPI(title="金融岗位雷达", lifespan=lifespan)
+app = FastAPI(title="Finance Intern Radar", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 if STATIC_DIR.exists():
@@ -314,8 +339,8 @@ async def api_export(request: Request):
     output = io.StringIO()
     writer = csv.writer(output)
 
-    writer.writerow(["=== 公司岗位 ==="])
-    writer.writerow(["公司", "地区", "类别", "项目名称", "岗位类型", "角色类型", "季节", "年份", "预测开放日", "置信度", "状态"])
+    writer.writerow(["=== Job Positions ==="])
+    writer.writerow(["Company", "Region", "Category", "Program", "Job Type", "Role Type", "Season", "Year", "Predicted Open Date", "Confidence", "Status"])
     for r in conn.execute("""
         SELECT c.name, c.region, c.category, jp.program_name, jp.job_type, jp.role_type,
                jp.season, jp.year, jp.predicted_open_date, jp.confidence, jp.status
@@ -327,11 +352,11 @@ async def api_export(request: Request):
                          r["season"], r["year"], r["predicted_open_date"], r["confidence"], r["status"]])
 
     writer.writerow([])
-    writer.writerow(["=== 抓取岗位 ==="])
-    writer.writerow(["标题", "公司", "岗位类型", "地区", "发布日期", "状态"])
+    writer.writerow(["=== Scraped Positions ==="])
+    writer.writerow(["Title", "Company", "Job Type", "Region", "Posted Date", "Status"])
     for r in conn.execute("""
         SELECT sp.title, c.name as company_name, sp.job_type, sp.region, sp.posted_date,
-               CASE WHEN sp.is_verified THEN '已验证' WHEN sp.is_new THEN '新发现' ELSE '已忽略' END as status
+               CASE WHEN sp.is_verified THEN 'Verified' WHEN sp.is_new THEN 'New' ELSE 'Ignored' END as status
         FROM scraped_positions sp
         LEFT JOIN scraping_sources ss ON sp.source_id = ss.id
         LEFT JOIN companies c ON ss.company_id = c.id
@@ -341,9 +366,9 @@ async def api_export(request: Request):
                          r["region"] or "", r["posted_date"] or "", r["status"]])
 
     writer.writerow([])
-    writer.writerow(["=== 订阅用户 ==="])
+    writer.writerow(["=== Subscribers ==="])
     crypto_key = derive_key(SECRET_KEY)
-    writer.writerow(["ID", "邮箱", "姓名", "年龄", "性别", "学校", "学业阶段", "毕业时间", "注册时间"])
+    writer.writerow(["ID", "Email", "Name", "Age", "Gender", "School", "Academic Stage", "Graduation Date", "Registered"])
     for r in conn.execute("SELECT * FROM subscribers ORDER BY id").fetchall():
         try:
             row = [r["id"], decrypt(r["email"], crypto_key),
@@ -455,10 +480,10 @@ async def mark_open(program_id: int, request: Request):
     cursor.execute("UPDATE job_positions SET status='open', open_date=? WHERE id=?", (actual_date, program_id))
     comp = cursor.execute("SELECT name FROM companies WHERE id=?", (prog["company_id"],)).fetchone()
     if prog["predicted_open_date"] and actual_date < prog["predicted_open_date"]:
-        msg = f"{comp['name']} - {prog['program_name']} 提前开放！预测 {prog['predicted_open_date']}，实际 {actual_date}"
+        msg = f"{comp['name']} - {prog['program_name']} opened early! Predicted {prog['predicted_open_date']}, actual {actual_date}"
         cursor.execute("INSERT INTO alerts (program_id, alert_type, message) VALUES (?, 'early_open', ?)", (program_id, msg))
     else:
-        msg = f"{comp['name']} - {prog['program_name']} 如期于 {actual_date} 开放"
+        msg = f"{comp['name']} - {prog['program_name']} opened as expected on {actual_date}"
         cursor.execute("INSERT INTO alerts (program_id, alert_type, message) VALUES (?, 'now_open', ?)", (program_id, msg))
     conn.commit()
     conn.close()
