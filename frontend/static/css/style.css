@@ -324,6 +324,48 @@ a:hover { color: var(--accent-hover); }
 .no-prediction { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
 .careers-link { display: inline-block; margin-top: 12px; font-size: 0.85rem; font-weight: 500; }
 
+/* Careers link states */
+.careers-link.disabled {
+    color: var(--text-muted);
+    font-style: italic;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.all-expired {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: var(--red-bg);
+    border-radius: var(--radius-sm);
+}
+
+/* Status badges */
+.status-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.status-open {
+    background: var(--green-bg);
+    color: var(--green);
+}
+.status-closed {
+    background: var(--red-bg);
+    color: var(--red);
+}
+.status-rolling {
+    background: var(--orange-bg);
+    color: var(--orange);
+}
+.status-upcoming {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
 /* ─── Filters ────────────────────────────────── */
 
 .filter-bar {

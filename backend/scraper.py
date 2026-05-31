@@ -1165,6 +1165,96 @@ def get_engine():
     return _engine
 
 
+# ─── URL Validation ───
+
+def validate_careers_url(url):
+    """Check if a careers URL is accessible (returns 200-399).
+    Returns True if valid, False otherwise."""
+    if not url:
+        return False
+    try:
+        import httpx as _httpx
+        resp = _httpx.head(url, timeout=10, follow_redirects=True,
+                           headers={"User-Agent": "FinanceInternRadar/1.0"})
+        return resp.status_code < 400
+    except Exception:
+        return False
+
+
+def update_url_validity():
+    """Check all companies' careers_url and update careers_url_valid flag."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    companies = conn.execute(
+        "SELECT id, careers_url FROM companies WHERE careers_url IS NOT NULL AND careers_url != ''"
+    ).fetchall()
+
+    updated = 0
+    for c in companies:
+        valid = 1 if validate_careers_url(c["careers_url"]) else 0
+        conn.execute(
+            "UPDATE companies SET careers_url_valid = ? WHERE id = ?",
+            (valid, c["id"])
+        )
+        updated += 1
+
+    conn.commit()
+    conn.close()
+    return {"checked": updated}
+
+
+def _update_program_statuses():
+    """Transition programs from upcoming/rolling to open when their date has passed."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Find programs that should now be open
+    newly_opened = conn.execute("""
+        SELECT id, company_id, program_name, predicted_open_date, status
+        FROM job_positions
+        WHERE status IN ('upcoming', 'rolling')
+          AND predicted_open_date IS NOT NULL
+          AND predicted_open_date <= ?
+          AND year = 2026
+    """, (today,)).fetchall()
+
+    opened_ids = []
+    for prog in newly_opened:
+        conn.execute(
+            "UPDATE job_positions SET status = 'open', open_date = ? WHERE id = ?",
+            (today, prog["id"])
+        )
+        opened_ids.append(prog["id"])
+
+    conn.commit()
+    conn.close()
+    return opened_ids
+
+
+def validate_all_urls():
+    """Validate all careers URLs, update program statuses, and notify subscribers
+    about any newly opened positions."""
+    url_result = update_url_validity()
+    opened_ids = _update_program_statuses()
+
+    # Notify subscribers about newly opened positions
+    if opened_ids:
+        try:
+            from notifier import notify_new_openings
+            notify_new_openings(opened_ids)
+        except Exception:
+            pass
+
+    return {
+        "urls_checked": url_result["checked"],
+        "newly_opened": len(opened_ids),
+        "opened_program_ids": opened_ids,
+    }
+
+
 if __name__ == "__main__":
     engine = ScraperEngine()
     print(f"Active sources: {len(engine.get_active_sources())}")

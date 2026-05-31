@@ -72,6 +72,68 @@ def check_and_notify():
     return len(notifications), notifications
 
 
+def notify_new_openings(program_ids):
+    """Notify subscribers immediately when programs have just opened.
+    Used for rolling-basis positions and programs with no prior prediction data.
+
+    Called by validate_all_urls() after _update_program_statuses() detects
+    that programs have transitioned to 'open' status.
+    """
+    if not program_ids:
+        return {"notified": 0, "details": []}
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    placeholders = ",".join("?" * len(program_ids))
+
+    # Get program details for the newly opened positions
+    cursor = conn.execute(f"""
+        SELECT jp.id, jp.program_name, jp.predicted_open_date, jp.open_date,
+               jp.rolling_basis, jp.status,
+               c.id as company_id, c.name as company_name, c.careers_url
+        FROM job_positions jp
+        JOIN companies c ON jp.company_id = c.id
+        WHERE jp.id IN ({placeholders})
+    """, program_ids)
+
+    newly_opened = [dict(r) for r in cursor.fetchall()]
+
+    notifications = []
+    for prog in newly_opened:
+        company_id = prog["company_id"]
+
+        cursor.execute("""
+            SELECT s.email, s.name, sub.role_type, sub.region
+            FROM subscriptions sub
+            JOIN subscribers s ON sub.subscriber_id = s.id
+            WHERE sub.active = 1
+            AND (sub.company_id = ? OR sub.company_id IS NULL)
+        """, (company_id,))
+
+        subscribers = [dict(r) for r in cursor.fetchall()]
+
+        for sub in subscribers:
+            notifications.append({
+                "to": sub["email"],
+                "name": sub.get("name", "Student"),
+                "company": prog["company_name"],
+                "program": prog["program_name"],
+                "open_date": prog.get("open_date", "today"),
+                "careers_url": prog.get("careers_url", ""),
+                "was_rolling": bool(prog.get("rolling_basis")),
+            })
+
+    conn.close()
+
+    # Log notifications
+    for n in notifications:
+        tag = "[ROLLING NOW OPEN]" if n["was_rolling"] else "[NOW OPEN]"
+        print(f"  [NOTIFY] {tag} {n['to']}: {n['company']} - {n['program']} is now open!")
+
+    return {"notified": len(notifications), "details": notifications}
+
+
 if __name__ == "__main__":
     from database import init_db
     init_db()

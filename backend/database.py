@@ -32,6 +32,7 @@ def init_db():
             description TEXT,
             website TEXT,
             careers_url TEXT,
+            careers_url_valid INTEGER DEFAULT NULL,
             is_featured INTEGER DEFAULT 0,
             logo_url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -49,7 +50,7 @@ def init_db():
             close_date TEXT,
             predicted_open_date TEXT,
             confidence REAL DEFAULT 0.0,
-            status TEXT DEFAULT 'upcoming' CHECK(status IN ('upcoming', 'open', 'closed')),
+            status TEXT DEFAULT 'upcoming' CHECK(status IN ('upcoming', 'open', 'closed', 'rolling')),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -163,6 +164,12 @@ def init_db():
             cursor.execute(f"ALTER TABLE job_positions ADD COLUMN {col_name} {col_def}")
         except sqlite3.OperationalError:
             pass  # column already exists
+
+    # ─── Migration: careers URL validity tracking ───
+    try:
+        cursor.execute("ALTER TABLE companies ADD COLUMN careers_url_valid INTEGER DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
     conn.commit()
     conn.close()

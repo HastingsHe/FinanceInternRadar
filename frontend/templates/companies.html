@@ -44,24 +44,42 @@
             <p class="company-desc">{{ c.description }}</p>
 
             {% if c.predictions %}
+            {% set all_closed = c.predictions | selectattr('status', 'equalto', 'closed') | list | length == c.predictions | length %}
             <div class="prediction-list">
                 {% for p in c.predictions %}
                 <div class="prediction-row">
                     <span class="pred-program">{{ p.program_name }}</span>
                     <span class="pred-type">{{ p.job_type or '' }}</span>
                     <span class="pred-date">{{ p.predicted_open_date | format_date }}</span>
+                    <span class="status-badge
+                        {% if p.status == 'open' %}status-open
+                        {% elif p.status == 'closed' %}status-closed
+                        {% elif p.status == 'rolling' %}status-rolling
+                        {% else %}status-upcoming{% endif %}">
+                        {% if p.status == 'rolling' %}Rolling
+                        {% elif p.status == 'open' %}Open
+                        {% elif p.status == 'closed' %}Closed
+                        {% else %}Upcoming{% endif %}
+                    </span>
                     <span class="confidence">
                         {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
                     </span>
                 </div>
                 {% endfor %}
             </div>
+            {% if all_closed %}
+            <p class="all-expired">All positions for this company have expired.</p>
+            {% endif %}
             {% else %}
             <p class="no-prediction">No prediction data yet.</p>
             {% endif %}
 
             {% if c.careers_url %}
-            <a href="{{ c.careers_url }}" target="_blank" class="careers-link">View Careers Page &rarr;</a>
+                {% if c.careers_url_valid == 0 %}
+                <span class="careers-link disabled">Careers page unavailable</span>
+                {% else %}
+                <a href="{{ c.careers_url }}" target="_blank" class="careers-link">View Careers Page &rarr;</a>
+                {% endif %}
             {% endif %}
         </div>
         {% endfor %}

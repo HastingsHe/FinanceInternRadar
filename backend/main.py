@@ -22,6 +22,7 @@ from recommender import get_today_picks
 from seed_data import seed
 from crypto_utils import encrypt, decrypt, derive_key
 from scheduler import get_scheduler
+from scraper import validate_all_urls
 
 # ─── Config ───
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -88,6 +89,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[Lifespan] FinTech seeding warning (non-fatal): {e}")
     get_scheduler().start()
+    # Validate careers URLs and update program statuses on startup
+    try:
+        result = validate_all_urls()
+        print(f"[Lifespan] URL validation: {result['urls_checked']} checked, "
+              f"{result['newly_opened']} newly opened")
+    except Exception as e:
+        print(f"[Lifespan] URL validation warning (non-fatal): {e}")
     yield
     get_scheduler().stop()
 
@@ -534,6 +542,27 @@ async def scrape_status(request: Request):
 async def scrape_trigger(request: Request):
     check_admin_session(request)
     return get_scheduler().trigger_now()
+
+
+@app.post("/api/admin/validate-urls")
+async def validate_urls(request: Request):
+    check_admin_session(request)
+    try:
+        result = validate_all_urls()
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/admin/notify-upcoming")
+async def notify_upcoming(request: Request):
+    check_admin_session(request)
+    from notifier import check_and_notify
+    try:
+        count, details = check_and_notify()
+        return {"status": "ok", "notifications": count}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/admin/scraped/{position_id}/verify")

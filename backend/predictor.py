@@ -166,8 +166,11 @@ def get_job_positions(company_id=None, region=None, role_type=None, job_type=Non
     cursor = conn.cursor()
 
     query = """
-        SELECT c.id as company_id, c.name, c.region, c.category, c.description, c.careers_url, c.is_featured,
-               jp.program_name, jp.season, jp.year, jp.predicted_open_date, jp.confidence, jp.status,
+        SELECT c.id as company_id, c.name, c.region, c.category, c.description, c.careers_url,
+               c.careers_url_valid, c.is_featured,
+               jp.id as program_id, jp.program_name, jp.season, jp.year,
+               jp.predicted_open_date, jp.open_date, jp.close_date,
+               jp.confidence, jp.status,
                jp.job_type, jp.role_type,
                jp.rolling_basis, jp.is_official_date, jp.source
         FROM job_positions jp

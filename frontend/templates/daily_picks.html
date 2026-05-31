@@ -29,7 +29,11 @@
                 <a href="{{ pick.website }}" target="_blank" class="btn-secondary btn-sm">Website</a>
                 {% endif %}
                 {% if pick.careers_url %}
-                <a href="{{ pick.careers_url }}" target="_blank" class="btn-primary btn-sm">Careers Page</a>
+                    {% if pick.careers_url_valid == 0 %}
+                    <span class="btn-primary btn-sm careers-link disabled" style="cursor: not-allowed; opacity: 0.5;">Careers Unavailable</span>
+                    {% else %}
+                    <a href="{{ pick.careers_url }}" target="_blank" class="btn-primary btn-sm">Careers Page</a>
+                    {% endif %}
                 {% endif %}
             </div>
         </div>
