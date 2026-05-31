@@ -57,6 +57,32 @@
 </section>
 {% endif %}
 
+{% if early_opens.count > 0 %}
+<section class="section" style="padding-top: 0;">
+    <div style="background: linear-gradient(135deg, #fff3cd, #ffeaa7); border: 2px solid #f39c12; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="color: #e67e22; margin: 0 0 8px 0;">Apply Early Warning</h3>
+        <p style="color: #856404; margin: 4px 0; font-size: 13px;">The following companies may start screening before their official opening dates. Rolling-basis positions are especially risky — applications are reviewed as they arrive.</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
+            {% for w in early_opens.warnings %}
+            <div style="background: #fff; border: 1px solid #f39c12; border-radius: 6px; padding: 6px 12px; font-size: 13px;">
+                <strong>{{ w.company_name }}</strong> — {{ w.program_name }}
+                {% if w.rolling_basis %}<span class="badge" style="background: #e67e22; color: #fff; font-size: 10px; margin-left: 4px;">Rolling</span>{% endif %}
+                {% if w.is_official_date %}<span style="color: #27ae60; font-size: 11px;">&check; Official</span>{% endif %}
+                <br><span style="color: #e67e22;">Opens {{ w.predicted_open_date }}</span>
+            </div>
+            {% endfor %}
+            {% for rw in early_opens.rolling_warnings %}
+            <div style="background: #fff; border: 1px dashed #e67e22; border-radius: 6px; padding: 6px 12px; font-size: 13px;">
+                <strong>{{ rw.company_name }}</strong> — {{ rw.program_name }}
+                <span class="badge" style="background: #e67e22; color: #fff; font-size: 10px; margin-left: 4px;">Rolling</span>
+                <br><span style="color: #e67e22;">May open early (est. {{ rw.predicted_open_date }})</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <section class="section timeline-section">
     <h2>Opening Soon <span class="badge">US</span></h2>
     <div class="timeline">
@@ -66,8 +92,10 @@
             <div class="timeline-content">
                 <strong>{{ p.name }}</strong>
                 <span class="timeline-program">{{ p.program_name }}</span>
-                <span class="confidence" title="Prediction Confidence">
-                    {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
+                {% if p.rolling_basis %}<span class="badge" style="background: #e67e22; color: #fff; font-size: 10px;">Rolling</span>{% endif %}
+                {% if p.is_official_date %}<span style="color: #27ae60; font-size: 11px; margin-left: 4px;">&check; Official</span>{% endif %}
+                <span class="confidence" title="{% if p.is_official_date %}Date from official careers page{% else %}AI-predicted date{% endif %}">
+                    {% if p.is_official_date %}&#9679;&#9679;&#9679;&#9679;{% elif p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
                     {{ (p.confidence * 100) | int }}%
                 </span>
             </div>
@@ -83,8 +111,10 @@
             <div class="timeline-content">
                 <strong>{{ p.name }}</strong>
                 <span class="timeline-program">{{ p.program_name }}</span>
-                <span class="confidence">
-                    {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
+                {% if p.rolling_basis %}<span class="badge" style="background: #e67e22; color: #fff; font-size: 10px;">Rolling</span>{% endif %}
+                {% if p.is_official_date %}<span style="color: #27ae60; font-size: 11px; margin-left: 4px;">&check; Official</span>{% endif %}
+                <span class="confidence" title="{% if p.is_official_date %}Date from official careers page{% else %}AI-predicted date{% endif %}">
+                    {% if p.is_official_date %}&#9679;&#9679;&#9679;&#9679;{% elif p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
                     {{ (p.confidence * 100) | int }}%
                 </span>
             </div>

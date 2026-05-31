@@ -160,7 +160,7 @@ def generate_all_predictions(target_year=2026):
 
 
 def get_job_positions(company_id=None, region=None, role_type=None, job_type=None, season="Summer", year=2026):
-    """Get job positions with company info, filterable."""
+    """Get job positions with company info, filterable. Now includes rolling_basis and is_official_date."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -168,7 +168,8 @@ def get_job_positions(company_id=None, region=None, role_type=None, job_type=Non
     query = """
         SELECT c.id as company_id, c.name, c.region, c.category, c.description, c.careers_url, c.is_featured,
                jp.program_name, jp.season, jp.year, jp.predicted_open_date, jp.confidence, jp.status,
-               jp.job_type, jp.role_type
+               jp.job_type, jp.role_type,
+               jp.rolling_basis, jp.is_official_date, jp.source
         FROM job_positions jp
         JOIN companies c ON jp.company_id = c.id
         WHERE jp.year = ?
@@ -206,6 +207,63 @@ def get_job_positions(company_id=None, region=None, role_type=None, job_type=Non
 
     conn.close()
     return rows
+
+
+def check_early_opens(days_threshold=14):
+    """Detect positions that are approaching their predicted open date or may have quietly opened early.
+
+    Returns a dict with:
+      - 'warnings': positions within days_threshold of predicted_open_date
+      - 'rolling_warnings': rolling-basis positions within 30 days (higher risk of early screening)
+      - 'count': total warnings
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    today = datetime.now().date()
+    threshold_date = today + timedelta(days=days_threshold)
+    rolling_threshold_date = today + timedelta(days=30)
+
+    # Positions opening soon (within threshold)
+    cursor.execute("""
+        SELECT jp.id, jp.program_name, jp.predicted_open_date, jp.confidence,
+               jp.rolling_basis, jp.is_official_date, jp.status,
+               c.name as company_name, c.region, c.careers_url
+        FROM job_positions jp
+        JOIN companies c ON jp.company_id = c.id
+        WHERE jp.status = 'upcoming'
+          AND jp.predicted_open_date IS NOT NULL
+          AND jp.predicted_open_date <= ?
+          AND jp.year = 2026
+        ORDER BY jp.predicted_open_date ASC
+    """, (threshold_date.isoformat(),))
+    warnings = [dict(r) for r in cursor.fetchall()]
+
+    # Rolling-basis positions with extended risk window (30 days)
+    cursor.execute("""
+        SELECT jp.id, jp.program_name, jp.predicted_open_date, jp.confidence,
+               jp.rolling_basis, jp.is_official_date, jp.status,
+               c.name as company_name, c.region, c.careers_url
+        FROM job_positions jp
+        JOIN companies c ON jp.company_id = c.id
+        WHERE jp.status = 'upcoming'
+          AND jp.rolling_basis = 1
+          AND jp.predicted_open_date IS NOT NULL
+          AND jp.predicted_open_date <= ?
+          AND jp.predicted_open_date > ?
+          AND jp.year = 2026
+        ORDER BY jp.predicted_open_date ASC
+    """, (rolling_threshold_date.isoformat(), threshold_date.isoformat()))
+    rolling_warnings = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    return {
+        "warnings": warnings,
+        "rolling_warnings": rolling_warnings,
+        "count": len(warnings) + len(rolling_warnings),
+    }
 
 
 # Alias for backward compat

@@ -152,6 +152,18 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # column already exists
 
+    # ─── Migration: rolling basis / official date tracking ───
+    job_positions_migrations = [
+        ("rolling_basis", "INTEGER DEFAULT 0"),
+        ("is_official_date", "INTEGER DEFAULT 0"),
+        ("source", "TEXT DEFAULT 'prediction'"),
+    ]
+    for col_name, col_def in job_positions_migrations:
+        try:
+            cursor.execute(f"ALTER TABLE job_positions ADD COLUMN {col_name} {col_def}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     conn.commit()
     conn.close()
 

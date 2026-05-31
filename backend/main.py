@@ -52,18 +52,25 @@ async def lifespan(app: FastAPI):
     init_db()
     conn = get_db()
     count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+    pos_count = conn.execute("SELECT COUNT(*) FROM job_positions WHERE year = 2026").fetchone()[0]
     conn.close()
+
     if count == 0:
         seed()
+        pos_count = 0  # Force prediction generation after fresh seed
+
+    if pos_count == 0:
         generate_all_predictions(2026)
-        # On first deploy, also seed FinTech companies and run initial scrape
+        print(f"[Lifespan] Generated predictions for 2026")
+
+    # Ensure FinTech companies and initial scrape on first deploy
+    if count == 0:
         try:
             from scraper import get_engine
             engine = get_engine()
             fintech_added = engine.ensure_fintech_companies()
             if fintech_added > 0:
                 print(f"[Lifespan] Added {fintech_added} FinTech startup companies")
-            # Run initial scrape to populate scraped_positions
             results = engine.scrape_all()
             new_pos = sum(r.get("new_positions", 0) for r in results)
             print(f"[Lifespan] Initial scrape complete: {new_pos} new positions found")
@@ -71,7 +78,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[Lifespan] Initial scrape warning (non-fatal): {e}")
     else:
-        # Ensure FinTech companies exist even on subsequent deploys
         try:
             from scraper import get_engine
             engine = get_engine()
@@ -125,6 +131,14 @@ async def index(request: Request):
     for r in alert_rows:
         early_alerts.append({"message": r["message"]})
 
+    # Check for early-opening / rolling-basis warnings
+    early_opens = {}
+    try:
+        from predictor import check_early_opens
+        early_opens = check_early_opens(days_threshold=14)
+    except Exception:
+        early_opens = {"warnings": [], "rolling_warnings": [], "count": 0}
+
     from scraper import get_engine
     newest_scraped = []
     try:
@@ -139,7 +153,7 @@ async def index(request: Request):
         "total_programs": total_programs, "us_predictions": us_predictions,
         "uk_predictions": uk_predictions, "picks": picks, "today": date.today(),
         "early_alerts": early_alerts, "newest_scraped": newest_scraped,
-        "all_regions": ALL_REGIONS,
+        "all_regions": ALL_REGIONS, "early_opens": early_opens,
     })
 
 

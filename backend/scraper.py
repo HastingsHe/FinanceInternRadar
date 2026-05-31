@@ -686,7 +686,400 @@ class ScraperEngine:
             "source_type": "summary",
             "fintech_companies_added": fintech_added,
         })
+
+        # Phase 5: Update predictions from official career pages
+        try:
+            official_result = self.update_predictions_from_official()
+            results.append({
+                "company": "__OFFICIAL_DATES__",
+                "source_id": None,
+                "status": "success",
+                "details": f"Official date scraping: {official_result['updated']} updated, "
+                           f"{official_result['skipped']} skipped, "
+                           f"{official_result['failed']} failed",
+                "new_positions": 0,
+                "source_type": "official_dates",
+                "official_updates": official_result,
+            })
+        except Exception as e:
+            results.append({
+                "company": "__OFFICIAL_DATES__",
+                "source_id": None,
+                "status": "failed",
+                "details": str(e),
+                "new_positions": 0,
+                "source_type": "official_dates",
+            })
+
         return results
+
+    # ─── Official Date Scraping ───
+
+    def _parse_date_from_text(self, text):
+        """Extract open/close dates from text using common patterns.
+
+        Returns list of (date_str, date_type) tuples where date_type is 'open' or 'close'.
+        """
+        if not text:
+            return []
+
+        results = []
+        date_patterns = [
+            # "Applications open: July 1, 2026"
+            (r'(?:applications?\s*(?:open|start)|open(?:ing)?\s*date)\s*:?\s*'
+             r'([A-Z][a-z]+)\s*(\d{1,2}),?\s*(\d{4})', 'open'),
+            # "Apply by September 30, 2026" / "Application deadline: October 15, 2026"
+            (r'(?:apply\s*(?:by|before|deadline)|deadline|closing\s*date)\s*:?\s*'
+             r'([A-Z][a-z]+)\s*(\d{1,2}),?\s*(\d{4})', 'close'),
+            # ISO dates: open/start: 2026-07-01
+            (r'(?:open|start|begin)\s*(?:ing)?\s*(?:date)?\s*:?\s*(\d{4}-\d{2}-\d{2})', 'open'),
+            # ISO dates: close/deadline: 2026-10-15
+            (r'(?:close|end|deadline)\s*(?:date)?\s*:?\s*(\d{4}-\d{2}-\d{2})', 'close'),
+            # "Open: June 2026" (month-year only, use 1st of month)
+            (r'(?:applications?\s*open|open(?:ing)?)\s*:?\s*'
+             r'([A-Z][a-z]+)\s*,?\s*(\d{4})', 'open'),
+            # "2026 Summer Internship - Apply by September 30, 2026"
+            (r'(\d{4})\s*(?:Summer|Spring|Fall|Winter|Off-Cycle)\s*(?:Intern|Analyst|Associate).*?'
+             r'(?:apply\s*(?:by|before)|deadline)\s*:?\s*'
+             r'([A-Z][a-z]+)\s*(\d{1,2}),?\s*(\d{4})', 'close'),
+        ]
+
+        month_map = {
+            "january": 1, "february": 2, "march": 3, "april": 4,
+            "may": 5, "june": 6, "july": 7, "august": 8,
+            "september": 9, "october": 10, "november": 11, "december": 12,
+        }
+
+        for pattern, date_type in date_patterns:
+            for m in re.finditer(pattern, text, re.IGNORECASE):
+                groups = m.groups()
+                try:
+                    if len(groups) == 1:
+                        # ISO date: 2026-07-01
+                        results.append((groups[0], date_type))
+                    elif len(groups) == 2:
+                        # Month Year
+                        month_name, year_str = groups
+                        month = month_map.get(month_name.lower())
+                        if month:
+                            results.append(
+                                (f"{year_str}-{month:02d}-01", date_type))
+                    elif len(groups) == 3:
+                        # Month Day Year or Year Month Day
+                        a, b, c = groups
+                        if a.isdigit() and len(a) == 4:
+                            # Year, Month_name, Day
+                            month = month_map.get(b.lower())
+                            if month:
+                                results.append(
+                                    (f"{a}-{month:02d}-{int(c):02d}", date_type))
+                        else:
+                            # Month_name, Day, Year
+                            month = month_map.get(a.lower())
+                            if month:
+                                results.append(
+                                    (f"{c}-{month:02d}-{int(b):02d}", date_type))
+                    elif len(groups) == 4:
+                        # Year, Month_name, Day, Year (4-group pattern)
+                        year1, month_name, day_str, year2 = groups
+                        month = month_map.get(month_name.lower())
+                        if month:
+                            results.append(
+                                (f"{year1}-{month:02d}-{int(day_str):02d}", date_type))
+                except (ValueError, KeyError):
+                    continue
+
+        return results
+
+    def _try_ats_json_api(self, careers_url):
+        """Try to fetch structured data from common ATS JSON APIs (Lever, Greenhouse).
+
+        Returns list of dicts with keys: title, open_date, close_date, url.
+        """
+        if httpx is None:
+            return None
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
+        listings = []
+
+        # ── Lever API ──
+        # Patterns: https://jobs.lever.co/{slug} or https://www.lever.co/{slug}
+        lever_match = re.search(
+            r'(?:jobs\.lever\.co|lever\.co)/([a-zA-Z0-9_-]+)', careers_url)
+        if lever_match:
+            slug = lever_match.group(1)
+            api_url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+            try:
+                resp = httpx.get(api_url, headers=headers, timeout=15,
+                                 follow_redirects=True)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for posting in (data if isinstance(data, list) else []):
+                        title = posting.get("text", posting.get("title", ""))
+                        created = posting.get("createdAt")
+                        hosted_url = posting.get("hostedUrl", posting.get("applyUrl", ""))
+                        if title and any(kw in title.lower() for kw in
+                                         ["intern", "graduate", "campus", "summer", "analyst"]):
+                            listing = {
+                                "title": title,
+                                "url": hosted_url,
+                                "open_date": None,
+                                "close_date": None,
+                            }
+                            if created:
+                                from datetime import timezone as tz
+                                listing["open_date"] = datetime.fromtimestamp(
+                                    created / 1000, tz.utc).strftime("%Y-%m-%d")
+                            listings.append(listing)
+            except Exception:
+                pass
+
+        # ── Greenhouse API ──
+        gh_match = re.search(
+            r'boards\.greenhouse\.io/([a-zA-Z0-9_-]+)', careers_url)
+        if gh_match:
+            board_token = gh_match.group(1)
+            api_url = f"https://boards.greenhouse.io/{board_token}/jobs.json"
+            try:
+                resp = httpx.get(api_url, headers=headers, timeout=15,
+                                 follow_redirects=True)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for job in data.get("jobs", []):
+                        title = job.get("title", "")
+                        updated = job.get("updated_at", "")
+                        absolute_url = job.get("absolute_url", "")
+                        if title and any(kw in title.lower() for kw in
+                                         ["intern", "graduate", "campus", "summer", "analyst"]):
+                            listing = {
+                                "title": title,
+                                "url": absolute_url,
+                                "open_date": None,
+                                "close_date": None,
+                            }
+                            if updated:
+                                listing["open_date"] = updated[:10]
+                            listings.append(listing)
+            except Exception:
+                pass
+
+        return listings if listings else None
+
+    def scrape_official_dates(self, company_id):
+        """Scrape official opening dates from a company's careers page.
+
+        Returns dict with keys: company_id, status, open_dates_found, positions_found.
+        """
+        conn = get_db()
+        company = conn.execute(
+            "SELECT id, name, careers_url, region FROM companies WHERE id = ?",
+            (company_id,)
+        ).fetchone()
+        conn.close()
+
+        if not company or not company["careers_url"]:
+            return {"company_id": company_id, "status": "no_careers_url",
+                    "open_dates_found": 0, "positions_found": 0}
+
+        careers_url = company["careers_url"]
+        found_dates = []
+        all_listings = []
+
+        # Phase 1: Try ATS JSON APIs (Lever, Greenhouse) — most reliable
+        api_listings = self._try_ats_json_api(careers_url)
+        if api_listings:
+            all_listings = api_listings
+            # Try to extract dates from individual posting URLs
+            for listing in api_listings:
+                if listing.get("url"):
+                    try:
+                        html_listings, _ = self.scrape_careers_page(
+                            listing["url"], timeout=10)
+                        if html_listings:
+                            for item in html_listings:
+                                snippet = item.get("snippet", "")
+                                dates = self._parse_date_from_text(snippet)
+                                for d, d_type in dates:
+                                    found_dates.append({
+                                        "program": listing.get("title", ""),
+                                        "date": d,
+                                        "type": d_type,
+                                    })
+                    except Exception:
+                        pass
+
+        # Phase 2: HTML scraping of main careers page
+        if not all_listings:
+            try:
+                html_listings, msg = self.scrape_careers_page(
+                    careers_url, timeout=15)
+                if html_listings:
+                    all_listings = [
+                        {"title": item.get("title", ""),
+                         "url": item.get("url", ""),
+                         "open_date": None, "close_date": None}
+                        for item in html_listings
+                    ]
+                    # Parse dates from snippets
+                    for item in html_listings:
+                        snippet = item.get("snippet", "")
+                        dates = self._parse_date_from_text(snippet)
+                        for d, d_type in dates:
+                            found_dates.append({
+                                "program": item.get("title", "")[:100],
+                                "date": d,
+                                "type": d_type,
+                            })
+            except Exception:
+                pass
+
+        # Phase 3: Also parse the main page HTML text for program-level dates
+        if not found_dates and httpx is not None and BeautifulSoup is not None:
+            try:
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/125.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml",
+                }
+                resp = httpx.get(careers_url, headers=headers,
+                                 timeout=15, follow_redirects=True)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
+                # Get all text from the page
+                page_text = soup.get_text(" ", strip=True)
+                dates = self._parse_date_from_text(page_text)
+                for d, d_type in dates:
+                    found_dates.append({
+                        "program": f"{company['name']} (from careers page)",
+                        "date": d,
+                        "type": d_type,
+                    })
+            except Exception:
+                pass
+
+        return {
+            "company_id": company_id,
+            "company_name": company["name"],
+            "status": "success" if found_dates else "no_dates_found",
+            "open_dates_found": len(found_dates),
+            "positions_found": len(all_listings),
+            "dates": found_dates[:20],
+        }
+
+    def update_predictions_from_official(self):
+        """Update low-confidence predictions with official dates from careers pages.
+
+        Iterates positions with confidence < 0.6 or NULL predicted_open_date,
+        attempts to scrape official dates, and updates if found.
+        """
+        conn = get_db()
+
+        # Find positions needing official verification
+        positions = conn.execute("""
+            SELECT jp.id, jp.company_id, jp.program_name, jp.predicted_open_date,
+                   jp.confidence, c.name as company_name, c.careers_url
+            FROM job_positions jp
+            JOIN companies c ON jp.company_id = c.id
+            WHERE jp.year = 2026
+              AND (jp.confidence < 0.6 OR jp.predicted_open_date IS NULL)
+              AND c.careers_url IS NOT NULL AND c.careers_url != ''
+            ORDER BY jp.confidence ASC
+        """).fetchall()
+
+        updated = 0
+        failed = 0
+        skipped = 0
+
+        for pos in positions:
+            pos_dict = dict(pos)
+            company_id = pos_dict["company_id"]
+
+            # Only scrape each company's careers page once per run
+            if not hasattr(self, '_official_cache'):
+                self._official_cache = {}
+            if company_id not in self._official_cache:
+                self._official_cache[company_id] = self.scrape_official_dates(
+                    company_id)
+
+            result = self._official_cache[company_id]
+            dates = result.get("dates", [])
+
+            if not dates:
+                skipped += 1
+                continue
+
+            # Try to match: find dates that look like they belong to this program
+            program_words = set(pos_dict["program_name"].lower().split())
+            best_open_date = None
+            best_close_date = None
+
+            for d in dates:
+                date_prog = d.get("program", "").lower()
+                # Fuzzy match: check if program name words appear in the date's context
+                match_score = sum(
+                    1 for w in program_words if w in date_prog and len(w) > 2)
+                if match_score > 0 or len(program_words) <= 1:
+                    if d["type"] == "open" and not best_open_date:
+                        best_open_date = d["date"]
+                    elif d["type"] == "close" and not best_close_date:
+                        best_close_date = d["date"]
+
+            # If no program-level match, use the first open date found
+            if not best_open_date:
+                for d in dates:
+                    if d["type"] == "open":
+                        best_open_date = d["date"]
+                        break
+
+            if best_open_date:
+                try:
+                    conn.execute("""
+                        UPDATE job_positions
+                        SET predicted_open_date = ?, confidence = 0.95,
+                            is_official_date = 1, source = 'official'
+                        WHERE id = ?
+                    """, (best_open_date, pos_dict["id"]))
+                    updated += 1
+                except Exception:
+                    failed += 1
+            else:
+                skipped += 1
+
+        conn.commit()
+        # Clean up cache
+        if hasattr(self, '_official_cache'):
+            del self._official_cache
+
+        # Log the update run
+        now = datetime.now().isoformat()
+        try:
+            conn.execute(
+                "INSERT INTO scrape_logs (company_id, status, details, scraped_at) "
+                "VALUES (NULL, 'success', ?, ?)",
+                (f"Official date update: {updated} updated, {skipped} skipped, {failed} failed",
+                 now)
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+        conn.close()
+        return {
+            "total_positions_checked": len(positions),
+            "updated": updated,
+            "skipped": skipped,
+            "failed": failed,
+        }
 
     # ─── Query Methods ───
 
