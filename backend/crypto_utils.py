@@ -7,25 +7,27 @@ import hashlib
 import base64
 from cryptography.fernet import Fernet
 
-# Master key — derived from project secret
-_MASTER_SECRET = "FinanceInternRadar_UserVault_2026"
-_key_bytes = hashlib.sha256(_MASTER_SECRET.encode()).digest()
-_key = base64.urlsafe_b64encode(_key_bytes)
-_cipher = Fernet(_key)
+
+def derive_key(secret: str) -> bytes:
+    """Derive a Fernet-compatible key from a secret string."""
+    key_bytes = hashlib.sha256(secret.encode()).digest()
+    return base64.urlsafe_b64encode(key_bytes)
 
 
-def encrypt(text: str) -> str:
+def encrypt(text: str, key: bytes) -> str:
     """Encrypt a plaintext string. Returns base64-encoded ciphertext."""
     if not text:
         return text
-    return _cipher.encrypt(text.encode()).decode()
+    cipher = Fernet(key)
+    return cipher.encrypt(text.encode()).decode()
 
 
-def decrypt(token: str) -> str:
+def decrypt(token: str, key: bytes) -> str:
     """Decrypt a Fernet token back to plaintext."""
     if not token:
         return token
     try:
-        return _cipher.decrypt(token.encode()).decode()
+        cipher = Fernet(key)
+        return cipher.decrypt(token.encode()).decode()
     except Exception:
         return token  # fallback for unencrypted legacy data

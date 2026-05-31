@@ -1,22 +1,22 @@
 {% extends "base.html" %}
-{% block title %}FinanceInternRadar - Home{% endblock %}
+{% block title %}金融岗位雷达 - 首页{% endblock %}
 {% block content %}
 
 <section class="hero">
     <div class="hero-content">
-        <h1>Finance Internship<br><span class="highlight">Radar</span></h1>
+        <h1>金融岗位<span class="highlight">雷达</span></h1>
         <p class="hero-sub">
-            Track, predict, and get alerted on intern program openings at 30+ finance companies across US &amp; UK.
-            Never miss an application window again.
+            追踪美国、英国、中国大陆、欧洲、香港、澳洲 6 大地区的金融岗位动态。
+            实习、全职、校招、管培生全面覆盖，永不遗漏申请窗口。
         </p>
         <div class="hero-actions">
-            <a href="/subscribe" class="btn-primary">Set Up Alerts</a>
-            <a href="/companies" class="btn-secondary">Browse Companies</a>
+            <a href="/subscribe" class="btn-primary">设置提醒</a>
+            <a href="/companies" class="btn-secondary">浏览公司</a>
         </div>
         <div class="hero-stats">
-            <div class="stat"><span class="stat-num">{{ total_companies }}</span> Companies</div>
-            <div class="stat"><span class="stat-num">{{ total_programs }}</span> Programs Tracked</div>
-            <div class="stat"><span class="stat-num">2026</span> Summer Cycle</div>
+            <div class="stat"><span class="stat-num">{{ total_companies }}</span> 家公司</div>
+            <div class="stat"><span class="stat-num">{{ total_programs }}</span> 岗位追踪</div>
+            <div class="stat"><span class="stat-num">6</span> 地区覆盖</div>
         </div>
     </div>
 </section>
@@ -32,8 +32,33 @@
 </section>
 {% endif %}
 
+{% if newest_scraped %}
+<section class="section scraped-section" style="padding-top: 0;">
+    <h2>最新发现 <span class="badge" style="background: #10b981; color: #fff;">NEW</span></h2>
+    <p class="section-desc">自动抓取的最新招聘信息，来自各公司官方招聘页面。</p>
+    <div class="scraped-grid">
+        {% for sp in newest_scraped %}
+        <div class="scraped-card">
+            <div class="scraped-header">
+                <strong>{{ sp.title }}</strong>
+                <span class="scraped-region">{{ sp.region or '' }}</span>
+            </div>
+            <div class="scraped-meta">
+                {% if sp.company_name %}<span>{{ sp.company_name }}</span>{% endif %}
+                <span class="scraped-type">{{ sp.job_type or '' }}</span>
+                <span>{{ sp.posted_date or '' }}</span>
+            </div>
+            {% if sp.external_url %}
+            <a href="{{ sp.external_url }}" target="_blank" class="scraped-link" style="font-size:12px;">查看详情 &rarr;</a>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
 <section class="section timeline-section">
-    <h2>Upcoming Opening Timeline <span class="badge">US</span></h2>
+    <h2>即将开放 <span class="badge">US</span></h2>
     <div class="timeline">
         {% for p in us_predictions %}
         <div class="timeline-item">
@@ -41,7 +66,7 @@
             <div class="timeline-content">
                 <strong>{{ p.name }}</strong>
                 <span class="timeline-program">{{ p.program_name }}</span>
-                <span class="confidence" title="Prediction confidence">
+                <span class="confidence" title="预测置信度">
                     {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
                     {{ (p.confidence * 100) | int }}%
                 </span>
@@ -50,7 +75,7 @@
         {% endfor %}
     </div>
 
-    <h2 style="margin-top: 2rem;">Upcoming Opening Timeline <span class="badge badge-uk">UK</span></h2>
+    <h2 style="margin-top: 2rem;">即将开放 <span class="badge badge-uk">UK</span></h2>
     <div class="timeline">
         {% for p in uk_predictions %}
         <div class="timeline-item">
@@ -69,8 +94,8 @@
 </section>
 
 <section class="section picks-section">
-    <h2>Today's Hidden Gems <span class="badge badge-gem">{{ today.strftime('%b %d') }}</span></h2>
-    <p class="section-desc">Three lesser-known finance companies worth your attention &mdash; refreshed daily.</p>
+    <h2>今日精选 <span class="badge badge-gem">{{ today.strftime('%b %d') }}</span></h2>
+    <p class="section-desc">每天推荐三家值得关注的金融公司 &mdash; 每日更新。</p>
     <div class="picks-grid">
         {% for pick in picks %}
         <div class="pick-card">
@@ -78,7 +103,7 @@
             <h3>{{ pick.name }}</h3>
             <p class="pick-reason">{{ pick.reason }}</p>
             {% if pick.website %}
-            <a href="{{ pick.website }}" target="_blank" class="pick-link">Visit Website &rarr;</a>
+            <a href="{{ pick.website }}" target="_blank" class="pick-link">访问官网 &rarr;</a>
             {% endif %}
         </div>
         {% endfor %}
@@ -86,9 +111,9 @@
 </section>
 
 <section class="section cta-section">
-    <h2>Ready to stay ahead?</h2>
-    <p>Pick the companies and roles you care about. We'll alert you before applications open.</p>
-    <a href="/subscribe" class="btn-primary">Subscribe Now</a>
+    <h2>准备好领先一步了吗？</h2>
+    <p>选择你关注的公司和岗位类型，我们会在申请开放前提醒你。</p>
+    <a href="/subscribe" class="btn-primary">立即订阅</a>
 </section>
 
 {% endblock %}

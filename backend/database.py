@@ -27,7 +27,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS companies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            region TEXT NOT NULL CHECK(region IN ('US', 'UK')),
+            region TEXT NOT NULL CHECK(region IN ('US', 'UK', 'CN', 'EU', 'HK', 'AU')),
             category TEXT NOT NULL CHECK(category IN ('Bulge Bracket', 'Boutique', 'Quant', 'Asset Management', 'Hedge Fund', 'Prop Trading', 'PE/VC', 'FinTech')),
             description TEXT,
             website TEXT,
@@ -37,12 +37,13 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE TABLE IF NOT EXISTS intern_programs (
+        CREATE TABLE IF NOT EXISTS job_positions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
             program_name TEXT NOT NULL,
             role_type TEXT CHECK(role_type IN ('Investment Banking', 'Sales & Trading', 'Quant', 'Research', 'Risk', 'Asset Management', 'S&T', 'Private Equity', 'Software Engineering', 'Data Science', 'Generalist')),
-            season TEXT NOT NULL CHECK(season IN ('Summer', 'Spring', 'Off-Cycle', 'Winter')),
+            job_type TEXT CHECK(job_type IN ('intern', 'full-time', 'graduate', 'management_trainee')),
+            season TEXT NOT NULL CHECK(season IN ('Summer', 'Spring', 'Off-Cycle', 'Winter', 'Fall', 'Full-Year')),
             year INTEGER NOT NULL,
             open_date TEXT,
             close_date TEXT,
@@ -104,9 +105,38 @@ def init_db():
             scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS scraping_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL REFERENCES companies(id),
+            source_url TEXT NOT NULL,
+            source_type TEXT CHECK(source_type IN ('careers_page', 'rss', 'api', 'linkedin')),
+            region TEXT,
+            job_type TEXT,
+            is_active INTEGER DEFAULT 1,
+            last_scraped_at TIMESTAMP,
+            last_status TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS scraped_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER REFERENCES scraping_sources(id),
+            title TEXT NOT NULL,
+            job_type TEXT,
+            location TEXT,
+            region TEXT,
+            posted_date TEXT,
+            external_url TEXT,
+            description_snippet TEXT,
+            is_new INTEGER DEFAULT 1,
+            is_verified INTEGER DEFAULT 0,
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_id, title, posted_date)
+        );
+
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            program_id INTEGER NOT NULL REFERENCES intern_programs(id) ON DELETE CASCADE,
+            program_id INTEGER NOT NULL REFERENCES job_positions(id) ON DELETE CASCADE,
             alert_type TEXT NOT NULL CHECK(alert_type IN ('early_open', 'prediction_miss', 'now_open', 'closing_soon')),
             message TEXT NOT NULL,
             is_read INTEGER DEFAULT 0,

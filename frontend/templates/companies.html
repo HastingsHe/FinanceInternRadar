@@ -1,30 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Companies - FinanceInternRadar{% endblock %}
+{% block title %}公司列表 - 金融岗位雷达{% endblock %}
 {% block content %}
 
 <section class="section">
-    <h1>All Companies</h1>
-    <p class="section-desc">Browse 30+ finance companies with predicted 2026 intern program opening dates.</p>
+    <h1>所有公司</h1>
+    <p class="section-desc">浏览 60+ 金融公司，覆盖 6 大地区的预测开放日期。</p>
 
-    <!-- Filters -->
     <form class="filter-bar" method="get" action="/companies">
         <select name="region" class="filter-select">
-            <option value="all" {% if filters.region == 'all' %}selected{% endif %}>All Regions</option>
-            <option value="US" {% if filters.region == 'US' %}selected{% endif %}>US</option>
-            <option value="UK" {% if filters.region == 'UK' %}selected{% endif %}>UK</option>
+            <option value="all" {% if filters.region == 'all' %}selected{% endif %}>全部地区</option>
+            <option value="US" {% if filters.region == 'US' %}selected{% endif %}>美国 (US)</option>
+            <option value="UK" {% if filters.region == 'UK' %}selected{% endif %}>英国 (UK)</option>
+            <option value="CN" {% if filters.region == 'CN' %}selected{% endif %}>中国大陆 (CN)</option>
+            <option value="EU" {% if filters.region == 'EU' %}selected{% endif %}>欧洲 (EU)</option>
+            <option value="HK" {% if filters.region == 'HK' %}selected{% endif %}>香港 (HK)</option>
+            <option value="AU" {% if filters.region == 'AU' %}selected{% endif %}>澳洲 (AU)</option>
         </select>
         <select name="category" class="filter-select">
-            <option value="all" {% if filters.category == 'all' %}selected{% endif %}>All Categories</option>
+            <option value="all" {% if filters.category == 'all' %}selected{% endif %}>全部类别</option>
             {% for cat in categories %}
             <option value="{{ cat }}" {% if filters.category == cat %}selected{% endif %}>{{ cat }}</option>
             {% endfor %}
         </select>
-        <input type="text" name="search" class="filter-search" placeholder="Search companies..." value="{{ filters.search }}">
-        <button type="submit" class="btn-primary btn-sm">Filter</button>
-        <a href="/companies" class="btn-secondary btn-sm">Clear</a>
+        <select name="job_type" class="filter-select">
+            <option value="all" {% if filters.job_type == 'all' %}selected{% endif %}>全部岗位类型</option>
+            {% for jt_val, jt_label in all_job_types %}
+            <option value="{{ jt_val }}" {% if filters.job_type == jt_val %}selected{% endif %}>{{ jt_label }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="search" class="filter-search" placeholder="搜索公司..." value="{{ filters.search }}">
+        <button type="submit" class="btn-primary btn-sm">筛选</button>
+        <a href="/companies" class="btn-secondary btn-sm">清除</a>
     </form>
 
-    <!-- Company Cards -->
     <div class="company-grid">
         {% for c in companies %}
         <div class="company-card {% if c.is_featured %}featured{% endif %}">
@@ -40,6 +48,7 @@
                 {% for p in c.predictions %}
                 <div class="prediction-row">
                     <span class="pred-program">{{ p.program_name }}</span>
+                    <span class="pred-type">{{ p.job_type or '' }}</span>
                     <span class="pred-date">{{ p.predicted_open_date | format_date }}</span>
                     <span class="confidence">
                         {% if p.confidence >= 0.7 %}&#9679;&#9679;&#9679;{% elif p.confidence >= 0.5 %}&#9679;&#9679;{% else %}&#9679;{% endif %}
@@ -48,11 +57,11 @@
                 {% endfor %}
             </div>
             {% else %}
-            <p class="no-prediction">No prediction available yet.</p>
+            <p class="no-prediction">暂无预测数据。</p>
             {% endif %}
 
             {% if c.careers_url %}
-            <a href="{{ c.careers_url }}" target="_blank" class="careers-link">View Careers Page &rarr;</a>
+            <a href="{{ c.careers_url }}" target="_blank" class="careers-link">查看招聘页面 &rarr;</a>
             {% endif %}
         </div>
         {% endfor %}

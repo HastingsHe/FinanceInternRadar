@@ -24,13 +24,13 @@ def check_and_notify():
 
     # Get programs opening within the alert window
     cursor.execute("""
-        SELECT ip.*, c.name as company_name, c.careers_url
-        FROM intern_programs ip
-        JOIN companies c ON ip.company_id = c.id
-        WHERE ip.year = 2026
-        AND ip.predicted_open_date BETWEEN ? AND ?
-        AND ip.status = 'upcoming'
-        ORDER BY ip.predicted_open_date
+        SELECT jp.*, c.name as company_name, c.careers_url
+        FROM job_positions jp
+        JOIN companies c ON jp.company_id = c.id
+        WHERE jp.year = 2026
+        AND jp.predicted_open_date BETWEEN ? AND ?
+        AND jp.status = 'upcoming'
+        ORDER BY jp.predicted_open_date
     """, (today.isoformat(), alert_date.isoformat()))
 
     upcoming = [dict(r) for r in cursor.fetchall()]

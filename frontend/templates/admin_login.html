@@ -140,8 +140,8 @@
 
         const resp = await fetch('/api/admin/login', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, password})
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({username, password})
         });
 
         if (resp.ok) {

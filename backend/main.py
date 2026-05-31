@@ -1,688 +1,537 @@
 """
-FinanceInternRadar - Main Application
-FastAPI backend serving the web interface and API endpoints.
+Finance Job Radar - FastAPI Application
+Multi-region finance job position radar (US/UK/CN/EU/HK/AU).
 """
 
 import os
-import sys
-import sqlite3
-import hashlib
+import csv
+import io
 from datetime import datetime, date
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
-# Add backend to path
-sys.path.insert(0, os.path.dirname(__file__))
-
-from database import init_db, get_db
-from predictor import generate_all_predictions, get_company_predictions
+from database import get_db, init_db
+from predictor import get_job_positions, get_company_predictions, generate_all_predictions
 from recommender import get_today_picks
-from crypto_utils import encrypt, decrypt
+from seed_data import seed
+from crypto_utils import encrypt, decrypt, derive_key
+from scheduler import get_scheduler
 
-# Paths
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATES_DIR = os.path.join(BASE_DIR, "frontend", "templates")
-STATIC_DIR = os.path.join(BASE_DIR, "frontend", "static")
+# ─── Config ───
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+STATIC_DIR = FRONTEND_DIR / "static"
+TEMPLATE_DIR = FRONTEND_DIR / "templates"
+
+SECRET_KEY = os.environ.get("RADAR_SECRET_KEY", "radar-dev-secret-key-change-in-production")
+ADMIN_USERNAME = os.environ.get("RADAR_ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.environ.get("RADAR_ADMIN_PASS", "radaradmin2024")
+
+ALL_REGIONS = ["US", "UK", "CN", "EU", "HK", "AU"]
+ALL_JOB_TYPES = [
+    ("intern", "实习"),
+    ("full-time", "全职"),
+    ("graduate", "校招/毕业生项目"),
+    ("management_trainee", "管培生"),
+]
+ROLE_TYPES = [
+    "Investment Banking", "Sales & Trading", "Quant", "Research",
+    "Risk", "Asset Management", "Private Equity",
+    "Software Engineering", "Data Science", "Generalist",
+]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init DB, seed data, generate predictions."""
     init_db()
-    # Seed if empty
     conn = get_db()
     count = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     conn.close()
     if count == 0:
-        from seed_data import seed
         seed()
-    # Generate predictions
-    try:
         generate_all_predictions(2026)
-    except Exception as e:
-        print(f"Prediction generation warning: {e}")
+    get_scheduler().start()
     yield
+    get_scheduler().stop()
 
 
-app = FastAPI(title="FinanceInternRadar", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+app = FastAPI(title="金融岗位雷达", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
-# Register custom filters
-def format_date(value, fmt="%b %d, %Y"):
-    if not value:
-        return "TBD"
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").strftime(fmt)
-    except (ValueError, TypeError):
-        return str(value)
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-templates.env.filters["format_date"] = format_date
+templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates.env.filters["format_date"] = lambda s: (
+    datetime.strptime(s, "%Y-%m-%d").strftime("%b %d, %Y") if s else "TBD"
+)
 
 
-# ─── Admin Auth ──────────────────────────────────────────────
-ADMIN_USERNAME = "admin123"
-ADMIN_PASSWORD = "Harry071115!"
-ADMIN_SALT = "radar_intern_2026_fir"
-
-def _admin_hash(pw: str) -> str:
-    return hashlib.sha256((ADMIN_USERNAME + ":" + pw + ADMIN_SALT).encode()).hexdigest()
-
-def verify_admin(request: Request) -> bool:
-    token = request.cookies.get("admin_token", "")
-    return token == _admin_hash(ADMIN_PASSWORD)
-
-def require_admin(request: Request):
-    if not verify_admin(request):
-        raise HTTPException(status_code=401, detail="Admin authentication required")
+def check_admin_session(request: Request):
+    if not request.session.get("admin_authenticated"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
 
-# ─── Page Routes ───────────────────────────────────────────
+# ─── Page Routes ───
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Landing page: overview + timeline."""
-    # Get upcoming predictions
-    us_predictions = get_company_predictions(region="US", year=2026)[:10]
-    uk_predictions = get_company_predictions(region="UK", year=2026)[:10]
-
-    # Get today's picks
-    picks = get_today_picks()
-
-    # Stats
     conn = get_db()
     total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
-    total_programs = conn.execute("SELECT COUNT(*) FROM intern_programs WHERE year=2026").fetchone()[0]
-
-    # Early opening alerts (for banner)
-    today_str = date.today().isoformat()
-    early_alerts = conn.execute("""
-        SELECT a.message, a.created_at
-        FROM alerts a
-        WHERE a.alert_type = 'early_open' AND a.is_read = 0
-        ORDER BY a.created_at DESC
-        LIMIT 5
-    """).fetchall()
+    total_programs = conn.execute("SELECT COUNT(*) FROM job_positions WHERE year = 2026").fetchone()[0]
     conn.close()
 
+    us_predictions = get_job_positions(region="US", year=2026, season="Summer")[:10]
+    uk_predictions = get_job_positions(region="UK", year=2026, season="Summer")[:10]
+    picks = get_today_picks()
+
+    early_alerts = []
+    conn = get_db()
+    alert_rows = conn.execute(
+        "SELECT message FROM alerts WHERE is_read = 0 ORDER BY created_at DESC LIMIT 3"
+    ).fetchall()
+    conn.close()
+    for r in alert_rows:
+        early_alerts.append({"message": r["message"]})
+
+    from scraper import get_engine
+    newest_scraped = []
+    try:
+        engine = get_engine()
+        newest_scraped = engine.get_scraped_positions(is_new=1, limit=6)
+        engine.close()
+    except Exception:
+        pass
+
     return templates.TemplateResponse("index.html", {
-        "request": request,
-        "us_predictions": us_predictions,
-        "uk_predictions": uk_predictions,
-        "picks": picks,
-        "total_companies": total_companies,
-        "total_programs": total_programs,
-        "early_alerts": early_alerts,
-        "today": date.today(),
+        "request": request, "total_companies": total_companies,
+        "total_programs": total_programs, "us_predictions": us_predictions,
+        "uk_predictions": uk_predictions, "picks": picks, "today": date.today(),
+        "early_alerts": early_alerts, "newest_scraped": newest_scraped,
+        "all_regions": ALL_REGIONS,
     })
 
 
 @app.get("/companies", response_class=HTMLResponse)
-async def companies_page(
-    request: Request,
-    region: str = Query("all"),
-    category: str = Query("all"),
-    role_type: str = Query("all"),
-    search: str = Query(""),
-):
-    """Company listing with filters."""
+async def companies_page(request: Request, region: str = "all", category: str = "all",
+                         search: str = "", job_type: str = "all"):
     conn = get_db()
-    conn.row_factory = __import__("sqlite3").Row
+    cats = [r["category"] for r in conn.execute(
+        "SELECT DISTINCT category FROM companies ORDER BY category"
+    ).fetchall()]
 
     query = "SELECT * FROM companies WHERE 1=1"
     params = []
-
     if region != "all":
-        query += " AND region = ?"
-        params.append(region)
+        query += " AND region = ?"; params.append(region)
     if category != "all":
-        query += " AND category = ?"
-        params.append(category)
+        query += " AND category = ?"; params.append(category)
     if search:
         query += " AND (name LIKE ? OR description LIKE ?)"
         params.extend([f"%{search}%", f"%{search}%"])
+    query += " ORDER BY name ASC"
 
-    query += " ORDER BY is_featured DESC, name ASC"
-    cursor = conn.execute(query, params)
-    companies = [dict(r) for r in cursor.fetchall()]
-
-    # Get predictions for each company
+    companies = [dict(r) for r in conn.execute(query, params).fetchall()]
     for c in companies:
-        preds = get_company_predictions(company_id=c["id"], year=2026)
+        preds = get_job_positions(company_id=c["id"], year=2026)
+        if job_type != "all":
+            preds = [p for p in preds if p.get("job_type") == job_type]
         c["predictions"] = preds
-
-    # Get distinct categories for filter
-    categories = [r[0] for r in conn.execute(
-        "SELECT DISTINCT category FROM companies ORDER BY category"
-    ).fetchall()]
     conn.close()
 
     return templates.TemplateResponse("companies.html", {
-        "request": request,
-        "companies": companies,
-        "categories": categories,
-        "filters": {"region": region, "category": category, "role_type": role_type, "search": search},
+        "request": request, "companies": companies, "categories": cats,
+        "all_regions": ALL_REGIONS, "all_job_types": ALL_JOB_TYPES,
+        "filters": {"region": region, "category": category, "search": search, "job_type": job_type},
     })
 
 
 @app.get("/daily-picks", response_class=HTMLResponse)
 async def daily_picks_page(request: Request):
-    """Daily hidden gem recommendations."""
     picks = get_today_picks()
-
-    # Also get some recent picks
-    conn = get_db()
-    conn.row_factory = __import__("sqlite3").Row
-    cursor = conn.execute("""
-        SELECT DISTINCT date FROM daily_recommendations
-        ORDER BY date DESC LIMIT 5
-    """)
-    recent_dates = [r[0] for r in cursor.fetchall()]
-
-    historical_picks = {}
-    for d in recent_dates:
-        cursor.execute("""
-            SELECT c.name, c.category, dr.reason
-            FROM daily_recommendations dr
-            JOIN companies c ON dr.company_id = c.id
-            WHERE dr.date = ?
-        """, (d,))
-        historical_picks[d] = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-
     return templates.TemplateResponse("daily_picks.html", {
-        "request": request,
-        "picks": picks,
-        "historical_picks": historical_picks,
-        "today": date.today().isoformat(),
+        "request": request, "picks": picks, "today": date.today(),
     })
 
 
 @app.get("/subscribe", response_class=HTMLResponse)
 async def subscribe_page(request: Request):
-    """Subscription management page."""
     conn = get_db()
-    conn.row_factory = __import__("sqlite3").Row
-
     companies = [dict(r) for r in conn.execute(
-        "SELECT id, name, region, category FROM companies ORDER BY name"
+        "SELECT id, name, region, category FROM companies ORDER BY region, name"
     ).fetchall()]
-
-    # Get role types from existing programs
-    role_types = sorted(set(
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT role_type FROM intern_programs WHERE role_type IS NOT NULL"
-        ).fetchall()
-    ))
     conn.close()
-
-    # Map from program names
-    program_role_types = set()
-    for c in companies:
-        preds = get_company_predictions(company_id=c["id"], year=2026)
-        for p in preds:
-            pname = p.get("program_name", "")
-            if "Investment Banking" in pname:
-                program_role_types.add("Investment Banking")
-            elif "Quant" in pname:
-                program_role_types.add("Quant")
-            elif "Sales & Trading" in pname or "Trading" in pname:
-                program_role_types.add("Sales & Trading")
-            elif "Research" in pname:
-                program_role_types.add("Research")
-            elif "Asset Management" in pname or "Investment" in pname:
-                program_role_types.add("Asset Management")
-
-    all_role_types = sorted(role_types or program_role_types or [
-        "Investment Banking", "Sales & Trading", "Quant", "Research",
-        "Asset Management", "Software Engineering", "Data Science"
-    ])
-
     return templates.TemplateResponse("subscribe.html", {
-        "request": request,
-        "companies": companies,
-        "role_types": all_role_types,
+        "request": request, "companies": companies, "role_types": ROLE_TYPES,
+        "all_regions": ALL_REGIONS, "all_job_types": ALL_JOB_TYPES,
     })
 
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_login_page(request: Request):
-    """Dedicated admin login page."""
-    # Already logged in? redirect to dashboard
-    if verify_admin(request):
-        return RedirectResponse("/admin/dashboard", status_code=302)
     return templates.TemplateResponse("admin_login.html", {"request": request})
 
 
 @app.get("/admin/dashboard", response_class=HTMLResponse)
 async def admin_dashboard_page(request: Request):
-    """Admin dashboard — user data, program management, alerts."""
-    require_admin(request)
-    return templates.TemplateResponse("admin_dashboard.html", {"request": request})
+    check_admin_session(request)
+    return templates.TemplateResponse("admin_dashboard.html", {
+        "request": request, "all_regions": ALL_REGIONS, "all_job_types": ALL_JOB_TYPES,
+    })
 
 
-# ─── API Endpoints ─────────────────────────────────────────
+# ─── Public API ───
 
-@app.post("/api/subscribe")
-async def api_subscribe(request: Request):
-    """Subscribe to alerts. All PII fields are encrypted at rest."""
-    form_data = await request.form()
-    email = form_data.get("email", "")
-    name = form_data.get("name", "")
-    age = form_data.get("age", "")
-    gender = form_data.get("gender", "")
-    school = form_data.get("school", "")
-    academic_stage = form_data.get("academic_stage", "")
-    graduation_time = form_data.get("graduation_time", "")
-    company_ids = form_data.getlist("company_ids")
-    role_types = form_data.getlist("role_types")
-    region = form_data.get("region", "all")
-    conn = get_db()
-
-    # Encrypt all PII before storage
-    encrypted_email = encrypt(email) if email else ""
-    encrypted_name = encrypt(name) if name else ""
-    encrypted_age = encrypt(age) if age else ""
-    encrypted_gender = encrypt(gender) if gender else ""
-    encrypted_school = encrypt(school) if school else ""
-    encrypted_academic_stage = encrypt(academic_stage) if academic_stage else ""
-    encrypted_graduation_time = encrypt(graduation_time) if graduation_time else ""
-    encrypted_subscribe_companies = encrypt(",".join(company_ids)) if company_ids else ""
-
-    # Upsert subscriber — lookup by encrypted email
-    cursor = conn.execute("SELECT id FROM subscribers WHERE email = ?", (encrypted_email,))
-    existing = cursor.fetchone()
-
-    if existing:
-        sub_id = existing[0]
-        conn.execute("""
-            UPDATE subscribers SET name = ?, age = ?, gender = ?, school = ?,
-                academic_stage = ?, graduation_time = ?, subscribe_companies = ?
-            WHERE id = ?
-        """, (encrypted_name, encrypted_age, encrypted_gender, encrypted_school,
-              encrypted_academic_stage, encrypted_graduation_time,
-              encrypted_subscribe_companies, sub_id))
-    else:
-        cursor = conn.execute(
-            "INSERT INTO subscribers (email, name, age, gender, school, academic_stage, graduation_time, subscribe_companies) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (encrypted_email, encrypted_name, encrypted_age, encrypted_gender,
-             encrypted_school, encrypted_academic_stage, encrypted_graduation_time,
-             encrypted_subscribe_companies)
-        )
-        sub_id = cursor.lastrowid
-
-    # Delete old subscriptions for this subscriber
-    conn.execute("DELETE FROM subscriptions WHERE subscriber_id = ?", (sub_id,))
-
-    # Insert new subscriptions
-    for cid in company_ids:
-        for rt in role_types:
-            if cid and rt:
-                conn.execute(
-                    "INSERT INTO subscriptions (subscriber_id, company_id, role_type, region) VALUES (?, ?, ?, ?)",
-                    (sub_id, int(cid), rt if rt != "all" else None, region if region != "all" else None)
-                )
-
-    conn.commit()
-    conn.close()
-    return JSONResponse({"status": "ok", "message": "Subscription updated successfully"})
+@app.get("/api/positions")
+async def api_positions(
+    region: str = Query(None), job_type: str = Query(None),
+    season: str = Query("Summer"), year: int = Query(2026),
+):
+    positions = get_job_positions(region=region, job_type=job_type, season=season, year=year)
+    return [{
+        "company_name": p["name"], "region": p["region"], "category": p["category"],
+        "program_name": p["program_name"], "job_type": p.get("job_type", "intern"),
+        "role_type": p.get("role_type", ""), "season": p["season"], "year": p["year"],
+        "predicted_open_date": p["predicted_open_date"], "confidence": p["confidence"],
+        "status": p["status"], "careers_url": p.get("careers_url", ""),
+    } for p in positions]
 
 
 @app.get("/api/predictions")
-async def api_predictions(
-    region: str = Query("all"),
-    role_type: str = Query("all"),
-    year: int = 2026,
+async def api_predictions_legacy(region: str = Query(None), season: str = Query("Summer"), year: int = Query(2026)):
+    return await api_positions(region=region, season=season, year=year)
+
+
+@app.get("/api/scraped")
+async def api_scraped(
+    region: str = Query(None), job_type: str = Query(None),
+    verified: int = Query(None), is_new: int = Query(None), limit: int = Query(100),
 ):
-    """API: get predictions."""
-    results = get_company_predictions(
-        region=region if region != "all" else None,
-        role_type=role_type if role_type != "all" else None,
-        year=year,
-    )
-    return JSONResponse(results)
+    from scraper import get_engine
+    engine = get_engine()
+    try:
+        return engine.get_scraped_positions(
+            region=region, job_type=job_type, verified=verified, is_new=is_new, limit=limit)
+    finally:
+        engine.close()
 
 
 @app.get("/api/timeline")
-async def api_timeline(year: int = 2026):
-    """API: timeline data for calendar view."""
-    conn = get_db()
-    conn.row_factory = __import__("sqlite3").Row
-
-    cursor = conn.execute("""
-        SELECT c.name, c.region, c.category, ip.program_name,
-               ip.predicted_open_date, ip.confidence
-        FROM intern_programs ip
-        JOIN companies c ON ip.company_id = c.id
-        WHERE ip.year = ?
-        ORDER BY ip.predicted_open_date ASC
-    """, (year,))
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return JSONResponse(rows)
+async def api_timeline():
+    timeline = {}
+    for region in ALL_REGIONS:
+        positions = get_job_positions(region=region, year=2026, season="Summer")
+        timeline[region] = [
+            {"date": p["predicted_open_date"], "company": p["name"], "program": p["program_name"]}
+            for p in positions[:8]
+        ]
+    return timeline
 
 
 @app.get("/api/stats")
 async def api_stats():
-    """API: platform stats."""
     conn = get_db()
-    total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
-    total_programs = conn.execute("SELECT COUNT(*) FROM intern_programs WHERE year=2026").fetchone()[0]
-    total_subscribers = conn.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]
-    total_subs = conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
-
-    by_region = {}
-    for row in conn.execute(
-        "SELECT region, COUNT(*) FROM companies GROUP BY region"
-    ).fetchall():
-        by_region[row[0]] = row[1]
-
-    by_category = {}
-    for row in conn.execute(
-        "SELECT category, COUNT(*) FROM companies GROUP BY category ORDER BY COUNT(*) DESC"
-    ).fetchall():
-        by_category[row[0]] = row[1]
-
+    stats = {
+        "total_companies": conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0],
+        "total_positions": conn.execute("SELECT COUNT(*) FROM job_positions WHERE year=2026").fetchone()[0],
+    }
+    for region in ALL_REGIONS:
+        stats[f"companies_{region}"] = conn.execute(
+            "SELECT COUNT(*) FROM companies WHERE region=?", (region,)
+        ).fetchone()[0]
     conn.close()
+    return stats
 
-    return JSONResponse({
-        "total_companies": total_companies,
-        "total_programs": total_programs,
-        "total_subscribers": total_subscribers,
-        "total_subscriptions": total_subs,
-        "by_region": by_region,
-        "by_category": by_category,
-    })
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: Request):
+    form = await request.form()
+    email = form.get("email", "").strip()
+    name = form.get("name", "").strip()
+    age = form.get("age", "").strip()
+    gender = form.get("gender", "").strip()
+    school = form.get("school", "").strip()
+    academic_stage = form.get("academic_stage", "").strip()
+    graduation_time = form.get("graduation_time", "").strip()
+    company_ids = form.getlist("company_ids")
+    role_types = form.getlist("role_types")
+    region = form.get("region", "all")
+
+    if not email:
+        return JSONResponse({"status": "error", "message": "Email required"}, status_code=400)
+
+    crypto_key = derive_key(SECRET_KEY)
+    enc_email = encrypt(email, crypto_key)
+    enc_name = encrypt(name, crypto_key) if name else None
+    enc_age = encrypt(age, crypto_key) if age else None
+    enc_gender = encrypt(gender, crypto_key) if gender else None
+    enc_school = encrypt(school, crypto_key) if school else None
+    enc_academic_stage = encrypt(academic_stage, crypto_key) if academic_stage else None
+    enc_graduation_time = encrypt(graduation_time, crypto_key) if graduation_time else None
+
+    conn = get_db()
+    cursor = conn.cursor()
+    existing = cursor.execute("SELECT id FROM subscribers WHERE email = ?", (enc_email,)).fetchone()
+
+    if existing:
+        sub_id = existing["id"]
+        cursor.execute("""
+            UPDATE subscribers SET name=?, age=?, gender=?, school=?, academic_stage=?, graduation_time=?,
+            subscribe_companies=?
+            WHERE id=?""",
+            (enc_name, enc_age, enc_gender, enc_school, enc_academic_stage, enc_graduation_time,
+             ",".join(company_ids), sub_id))
+        cursor.execute("DELETE FROM subscriptions WHERE subscriber_id = ?", (sub_id,))
+    else:
+        cursor.execute("""
+            INSERT INTO subscribers (email, name, age, gender, school, academic_stage, graduation_time, subscribe_companies)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (enc_email, enc_name, enc_age, enc_gender, enc_school, enc_academic_stage, enc_graduation_time,
+             ",".join(company_ids)))
+        sub_id = cursor.lastrowid
+
+    for cid in company_ids:
+        for rt in (role_types or [None]):
+            cursor.execute(
+                "INSERT INTO subscriptions (subscriber_id, company_id, role_type, region) VALUES (?,?,?,?)",
+                (sub_id, int(cid) if cid != "all" else None, rt, region if region != "all" else None))
+
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Subscribed successfully"}
 
 
 @app.get("/api/export")
 async def api_export(request: Request):
-    """Export user data to Excel (admin only). Decrypts data on export."""
-    require_admin(request)
-    from io import BytesIO
-    from datetime import datetime
-
+    check_admin_session(request)
     conn = get_db()
-    wb = __import__("openpyxl").Workbook()
+    output = io.StringIO()
+    writer = csv.writer(output)
 
-    # Sheet 1: 订阅用户
-    ws = wb.active
-    ws.title = "订阅用户"
-    headers = ["ID", "邮箱", "姓名", "年龄", "性别", "学校", "学业阶段", "毕业时间", "注册时间", "订阅公司数", "职位类型"]
-    for c, h in enumerate(headers, 1):
-        ws.cell(row=1, column=c, value=h)
-    for row_idx, s in enumerate(conn.execute(
-        "SELECT id, email, name, age, gender, school, academic_stage, graduation_time, created_at FROM subscribers ORDER BY created_at DESC"
-    ).fetchall(), 2):
-        sid = s[0]
-        cnt = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE subscriber_id=?", (sid,)).fetchone()[0]
-        roles = [r[0] for r in conn.execute(
-            "SELECT DISTINCT role_type FROM subscriptions WHERE subscriber_id=? AND role_type IS NOT NULL", (sid,)
-        ).fetchall()]
-        vals = [s[0], decrypt(s[1]), decrypt(s[2]) or "", decrypt(s[3]) or "", decrypt(s[4]) or "",
-                decrypt(s[5]) or "", decrypt(s[6]) or "", decrypt(s[7]) or "", s[8], cnt,
-                ", ".join(roles) if roles else ""]
-        for c, v in enumerate(vals, 1):
-            ws.cell(row=row_idx, column=c, value=v)
+    writer.writerow(["=== 公司岗位 ==="])
+    writer.writerow(["公司", "地区", "类别", "项目名称", "岗位类型", "角色类型", "季节", "年份", "预测开放日", "置信度", "状态"])
+    for r in conn.execute("""
+        SELECT c.name, c.region, c.category, jp.program_name, jp.job_type, jp.role_type,
+               jp.season, jp.year, jp.predicted_open_date, jp.confidence, jp.status
+        FROM job_positions jp JOIN companies c ON jp.company_id = c.id
+        WHERE jp.year=2026 ORDER BY c.region, jp.predicted_open_date
+    """).fetchall():
+        writer.writerow([r["name"], r["region"], r["category"], r["program_name"],
+                         r["job_type"] or "", r["role_type"] or "",
+                         r["season"], r["year"], r["predicted_open_date"], r["confidence"], r["status"]])
 
-    # Sheet 2: 订阅明细
-    ws2 = wb.create_sheet("订阅明细")
-    headers2 = ["订阅ID", "用户邮箱", "用户姓名", "公司", "地区", "类别", "职位"]
-    for c, h in enumerate(headers2, 1):
-        ws2.cell(row=1, column=c, value=h)
-    for row_idx, d in enumerate(conn.execute("""
-        SELECT s.id, sub.email, sub.name, c.name, c.region, c.category, s.role_type
-        FROM subscriptions s
-        JOIN subscribers sub ON s.subscriber_id=sub.id
-        LEFT JOIN companies c ON s.company_id=c.id
-        ORDER BY sub.email, c.name
-    """).fetchall(), 2):
-        vals = [d[0], decrypt(d[1]), decrypt(d[2]) or "", d[3], d[4], d[5], d[6] or ""]
-        for c, v in enumerate(vals, 1):
-            ws2.cell(row=row_idx, column=c, value=v)
+    writer.writerow([])
+    writer.writerow(["=== 抓取岗位 ==="])
+    writer.writerow(["标题", "公司", "岗位类型", "地区", "发布日期", "状态"])
+    for r in conn.execute("""
+        SELECT sp.title, c.name as company_name, sp.job_type, sp.region, sp.posted_date,
+               CASE WHEN sp.is_verified THEN '已验证' WHEN sp.is_new THEN '新发现' ELSE '已忽略' END as status
+        FROM scraped_positions sp
+        LEFT JOIN scraping_sources ss ON sp.source_id = ss.id
+        LEFT JOIN companies c ON ss.company_id = c.id
+        ORDER BY sp.scraped_at DESC LIMIT 500
+    """).fetchall():
+        writer.writerow([r["title"], r["company_name"] or "", r["job_type"] or "",
+                         r["region"] or "", r["posted_date"] or "", r["status"]])
 
-    # Sheet 3: 统计
-    ws3 = wb.create_sheet("统计")
-    ws3.cell(row=1, column=1, value=f"FinanceInternRadar - 导出于 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    r = 3
-    ws3.cell(row=r, column=1, value="订阅用户数"); ws3.cell(row=r, column=2, value=conn.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]); r += 1
-    ws3.cell(row=r, column=1, value="订阅记录数"); ws3.cell(row=r, column=2, value=conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]); r += 2
-    ws3.cell(row=r, column=1, value="地区分布"); r += 1
-    for reg in conn.execute("SELECT c.region, COUNT(*) c FROM subscriptions s JOIN companies c ON s.company_id=c.id GROUP BY c.region"):
-        ws3.cell(row=r, column=1, value=reg[0]); ws3.cell(row=r, column=2, value=reg[1]); r += 1
+    writer.writerow([])
+    writer.writerow(["=== 订阅用户 ==="])
+    crypto_key = derive_key(SECRET_KEY)
+    writer.writerow(["ID", "邮箱", "姓名", "年龄", "性别", "学校", "学业阶段", "毕业时间", "注册时间"])
+    for r in conn.execute("SELECT * FROM subscribers ORDER BY id").fetchall():
+        try:
+            row = [r["id"], decrypt(r["email"], crypto_key),
+                   decrypt(r.get("name") or "", crypto_key),
+                   decrypt(r.get("age") or "", crypto_key),
+                   decrypt(r.get("gender") or "", crypto_key),
+                   decrypt(r.get("school") or "", crypto_key),
+                   decrypt(r.get("academic_stage") or "", crypto_key),
+                   decrypt(r.get("graduation_time") or "", crypto_key), r["created_at"]]
+        except Exception:
+            row = [r["id"], "***encrypted***", "", "", "", "", "", "", r["created_at"]]
+        writer.writerow(row)
 
     conn.close()
-    output = BytesIO()
-    wb.save(output)
     output.seek(0)
     return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=FinanceInternRadar_Users.xlsx"},
-    )
+        iter([output.getvalue()]), media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f"attachment; filename=FinanceJobRadar_{date.today().isoformat()}.csv"})
 
 
-# ─── Admin API ───────────────────────────────────────────────
-
-@app.get("/api/admin/userdata")
-async def admin_userdata(request: Request):
-    """Return decrypted subscriber data (admin only)."""
-    require_admin(request)
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT id, email, name, age, gender, school, academic_stage, graduation_time, subscribe_companies, created_at "
-        "FROM subscribers ORDER BY created_at DESC"
-    ).fetchall()
-    conn.close()
-
-    result = []
-    for r in rows:
-        sid = r[0]
-        conn2 = get_db()
-        cnt = conn2.execute("SELECT COUNT(*) FROM subscriptions WHERE subscriber_id=?", (sid,)).fetchone()[0]
-        roles = [x[0] for x in conn2.execute(
-            "SELECT DISTINCT role_type FROM subscriptions WHERE subscriber_id=? AND role_type IS NOT NULL", (sid,)
-        ).fetchall()]
-        conn2.close()
-        result.append({
-            "id": r[0],
-            "email": decrypt(r[1]),
-            "name": decrypt(r[2]) if r[2] else "",
-            "age": decrypt(r[3]) if r[3] else "",
-            "gender": decrypt(r[4]) if r[4] else "",
-            "school": decrypt(r[5]) if r[5] else "",
-            "academic_stage": decrypt(r[6]) if r[6] else "",
-            "graduation_time": decrypt(r[7]) if r[7] else "",
-            "subscribe_companies": decrypt(r[8]) if r[8] else "",
-            "created_at": r[9],
-            "company_count": cnt,
-            "roles": ", ".join(roles) if roles else "",
-        })
-    return JSONResponse(result)
-
+# ─── Admin API ───
 
 @app.post("/api/admin/login")
 async def admin_login(request: Request):
-    data = await request.json()
-    username = data.get("username", "")
-    pw = data.get("password", "")
-    if username == ADMIN_USERNAME and pw == ADMIN_PASSWORD:
-        resp = JSONResponse({"status": "ok"})
-        resp.set_cookie(
-            key="admin_token",
-            value=_admin_hash(ADMIN_PASSWORD),
-            httponly=True,
-            max_age=86400,
-            samesite="lax",
-        )
-        return resp
-    return JSONResponse({"status": "error", "message": "用户名或密码错误"}, status_code=401)
+    form = await request.form()
+    if form.get("username") == ADMIN_USERNAME and form.get("password") == ADMIN_PASSWORD:
+        request.session["admin_authenticated"] = True
+        return RedirectResponse(url="/admin/dashboard", status_code=303)
+    return JSONResponse({"status": "error", "message": "Invalid credentials"}, status_code=401)
 
 
 @app.post("/api/admin/logout")
-async def admin_logout():
-    resp = JSONResponse({"status": "ok"})
-    resp.delete_cookie("admin_token")
-    return resp
+async def admin_logout(request: Request):
+    request.session.clear()
+    return {"status": "ok"}
 
 
 @app.get("/api/admin/check")
 async def admin_check(request: Request):
-    return JSONResponse({"authenticated": verify_admin(request)})
+    return {"authenticated": bool(request.session.get("admin_authenticated"))}
 
 
-@app.post("/api/admin/programs/{program_id}/mark-open")
-async def admin_mark_open(program_id: int, request: Request):
-    require_admin(request)
-    data = await request.json()
-    actual_date = data.get("actual_date", date.today().isoformat())
-
+@app.get("/api/admin/userdata")
+async def admin_userdata(request: Request):
+    check_admin_session(request)
     conn = get_db()
-    prog = conn.execute(
-        "SELECT id, program_name, predicted_open_date, company_id FROM intern_programs WHERE id=?",
-        (program_id,),
-    ).fetchone()
-    if not prog:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Program not found")
-
-    conn.execute(
-        "UPDATE intern_programs SET open_date=?, status='open' WHERE id=?",
-        (actual_date, program_id),
-    )
-
-    is_early = False
-    pred_date = prog["predicted_open_date"]
-    if pred_date and actual_date < pred_date:
-        is_early = True
-        company = conn.execute("SELECT name FROM companies WHERE id=?", (prog["company_id"],)).fetchone()
-        conn.execute(
-            "INSERT INTO alerts (program_id, alert_type, message, is_read) VALUES (?, 'early_open', ?, 0)",
-            (program_id, f"{company['name']} - {prog['program_name']}：预测 {pred_date}，实际 {actual_date}（提前开放！）"),
-        )
-    elif pred_date and actual_date >= pred_date:
-        conn.execute(
-            "INSERT INTO alerts (program_id, alert_type, message, is_read) VALUES (?, 'now_open', ?, 0)",
-            (program_id, f"{prog['program_name']} 已如期开放，实际日期 {actual_date}"),
-        )
-
-    conn.commit()
+    crypto_key = derive_key(SECRET_KEY)
+    users = []
+    for r in conn.execute("SELECT * FROM subscribers ORDER BY id DESC").fetchall():
+        try:
+            users.append({
+                "id": r["id"], "email": decrypt(r["email"], crypto_key),
+                "name": decrypt(r.get("name") or "", crypto_key),
+                "age": decrypt(r.get("age") or "", crypto_key),
+                "gender": decrypt(r.get("gender") or "", crypto_key),
+                "school": decrypt(r.get("school") or "", crypto_key),
+                "academic_stage": decrypt(r.get("academic_stage") or "", crypto_key),
+                "graduation_time": decrypt(r.get("graduation_time") or "", crypto_key),
+                "created_at": r["created_at"],
+                "company_count": len((r.get("subscribe_companies") or "").split(",")),
+                "roles": (r.get("subscribe_companies") or "")[:60],
+            })
+        except Exception:
+            users.append({
+                "id": r["id"], "email": "[Decryption error]",
+                "name": "", "age": "", "gender": "", "school": "",
+                "academic_stage": "", "graduation_time": "",
+                "created_at": r["created_at"], "company_count": 0, "roles": "",
+            })
     conn.close()
-    return JSONResponse({"status": "ok", "is_early": is_early})
-
-
-@app.post("/api/admin/programs/{program_id}/mark-closed")
-async def admin_mark_closed(program_id: int, request: Request):
-    require_admin(request)
-    conn = get_db()
-    conn.execute("UPDATE intern_programs SET status='closed' WHERE id=?", (program_id,))
-    conn.commit()
-    conn.close()
-    return JSONResponse({"status": "ok"})
+    return users
 
 
 @app.get("/api/admin/alerts")
 async def admin_alerts(request: Request):
-    require_admin(request)
+    check_admin_session(request)
     conn = get_db()
-    today = date.today().isoformat()
-
-    # Potential early openings: predicted date passed but still upcoming
-    potential = conn.execute("""
-        SELECT ip.id, ip.program_name, c.name as company, ip.predicted_open_date, ip.status
-        FROM intern_programs ip
-        JOIN companies c ON ip.company_id = c.id
-        WHERE ip.predicted_open_date <= ?
-          AND ip.open_date IS NULL
-          AND ip.status = 'upcoming'
-        ORDER BY ip.predicted_open_date
-    """, (today,)).fetchall()
-
-    # Existing alerts
-    alerts = conn.execute("""
-        SELECT a.id, a.program_id, a.alert_type, a.message, a.is_read, a.created_at,
-               ip.program_name, c.name as company
-        FROM alerts a
-        JOIN intern_programs ip ON a.program_id = ip.id
-        JOIN companies c ON ip.company_id = c.id
-        ORDER BY a.created_at DESC
-        LIMIT 50
-    """).fetchall()
-
-    # Programs grouped by status
-    upcoming = conn.execute("""
-        SELECT ip.id, ip.program_name, c.name as company, ip.season, ip.year,
-               ip.predicted_open_date, ip.open_date, ip.status
-        FROM intern_programs ip
-        JOIN companies c ON ip.company_id = c.id
-        WHERE ip.status = 'upcoming'
-        ORDER BY ip.predicted_open_date
-        LIMIT 30
-    """).fetchall()
-
-    opened = conn.execute("""
-        SELECT ip.id, ip.program_name, c.name as company, ip.season, ip.year,
-               ip.predicted_open_date, ip.open_date, ip.status
-        FROM intern_programs ip
-        JOIN companies c ON ip.company_id = c.id
-        WHERE ip.status = 'open'
-        ORDER BY ip.open_date DESC
-    """).fetchall()
-
-    closed = conn.execute("""
-        SELECT ip.id, ip.program_name, c.name as company, ip.season, ip.year,
-               ip.predicted_open_date, ip.open_date, ip.status
-        FROM intern_programs ip
-        JOIN companies c ON ip.company_id = c.id
-        WHERE ip.status = 'closed'
-        ORDER BY ip.open_date DESC
-        LIMIT 30
-    """).fetchall()
-
+    potential_early = [dict(r) for r in conn.execute("""
+        SELECT c.name as company, jp.program_name, jp.predicted_open_date
+        FROM job_positions jp JOIN companies c ON jp.company_id = c.id
+        WHERE jp.status = 'open' AND jp.open_date < jp.predicted_open_date
+        ORDER BY jp.open_date DESC LIMIT 10
+    """).fetchall()]
+    upcoming = [dict(r) for r in conn.execute(
+        "SELECT jp.id, c.name as company, jp.program_name, jp.predicted_open_date FROM job_positions jp JOIN companies c ON jp.company_id = c.id WHERE jp.status='upcoming' ORDER BY jp.predicted_open_date LIMIT 30"
+    ).fetchall()]
+    opened = [dict(r) for r in conn.execute(
+        "SELECT jp.id, c.name as company, jp.program_name, jp.open_date FROM job_positions jp JOIN companies c ON jp.company_id = c.id WHERE jp.status='open' ORDER BY jp.open_date DESC LIMIT 30"
+    ).fetchall()]
+    closed = [dict(r) for r in conn.execute(
+        "SELECT jp.id, c.name as company, jp.program_name, jp.open_date FROM job_positions jp JOIN companies c ON jp.company_id = c.id WHERE jp.status='closed' ORDER BY jp.open_date DESC LIMIT 30"
+    ).fetchall()]
+    alerts = [dict(r) for r in conn.execute("SELECT * FROM alerts ORDER BY created_at DESC LIMIT 50").fetchall()]
     conn.close()
-
-    def p(r):
-        return {
-            "id": r["id"], "program_name": r["program_name"], "company": r["company"],
-            "season": r["season"], "year": r["year"],
-            "predicted_open_date": r["predicted_open_date"], "open_date": r["open_date"],
-            "status": r["status"],
-        }
-
-    return JSONResponse({
-        "potential_early": [
-            {"id": r["id"], "program_name": r["program_name"], "company": r["company"],
-             "predicted_open_date": r["predicted_open_date"], "status": r["status"]}
-            for r in potential
-        ],
-        "alerts": [
-            {"id": r["id"], "program_id": r["program_id"], "alert_type": r["alert_type"],
-             "message": r["message"], "is_read": r["is_read"], "created_at": r["created_at"],
-             "program_name": r["program_name"], "company": r["company"]}
-            for r in alerts
-        ],
-        "upcoming": [p(r) for r in upcoming],
-        "opened": [p(r) for r in opened],
-        "closed": [p(r) for r in closed],
-    })
+    return {"potential_early": potential_early, "upcoming": upcoming, "opened": opened, "closed": closed, "alerts": alerts}
 
 
-@app.post("/api/admin/alerts/{alert_id}/read")
-async def admin_mark_read(alert_id: int, request: Request):
-    require_admin(request)
+@app.post("/api/admin/programs/{program_id}/mark-open")
+async def mark_open(program_id: int, request: Request):
+    check_admin_session(request)
+    body = await request.json()
+    actual_date = body.get("actual_date", date.today().isoformat())
     conn = get_db()
-    conn.execute("UPDATE alerts SET is_read=1 WHERE id=?", (alert_id,))
+    cursor = conn.cursor()
+    prog = cursor.execute("SELECT * FROM job_positions WHERE id = ?", (program_id,)).fetchone()
+    if not prog:
+        conn.close()
+        raise HTTPException(404, "Program not found")
+    cursor.execute("UPDATE job_positions SET status='open', open_date=? WHERE id=?", (actual_date, program_id))
+    comp = cursor.execute("SELECT name FROM companies WHERE id=?", (prog["company_id"],)).fetchone()
+    if prog["predicted_open_date"] and actual_date < prog["predicted_open_date"]:
+        msg = f"{comp['name']} - {prog['program_name']} 提前开放！预测 {prog['predicted_open_date']}，实际 {actual_date}"
+        cursor.execute("INSERT INTO alerts (program_id, alert_type, message) VALUES (?, 'early_open', ?)", (program_id, msg))
+    else:
+        msg = f"{comp['name']} - {prog['program_name']} 如期于 {actual_date} 开放"
+        cursor.execute("INSERT INTO alerts (program_id, alert_type, message) VALUES (?, 'now_open', ?)", (program_id, msg))
     conn.commit()
     conn.close()
-    return JSONResponse({"status": "ok"})
+    return {"status": "ok"}
 
 
-# ─── Run ────────────────────────────────────────────────────
+@app.post("/api/admin/programs/{program_id}/mark-closed")
+async def mark_closed(program_id: int, request: Request):
+    check_admin_session(request)
+    conn = get_db()
+    conn.execute("UPDATE job_positions SET status='closed' WHERE id=?", (program_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+
+# ─── Scraping Admin ───
+
+@app.get("/api/admin/scrape/status")
+async def scrape_status(request: Request):
+    check_admin_session(request)
+    sched = get_scheduler()
+    status = sched.get_status()
+    from scraper import get_engine
+    engine = get_engine()
+    try:
+        scrape_status = engine.get_scraping_status()
+    finally:
+        engine.close()
+    return {"scheduler": status, "scraping": scrape_status}
+
+
+@app.post("/api/admin/scrape/trigger")
+async def scrape_trigger(request: Request):
+    check_admin_session(request)
+    return get_scheduler().trigger_now()
+
+
+@app.post("/api/admin/scraped/{position_id}/verify")
+async def scraped_verify(position_id: int, request: Request):
+    check_admin_session(request)
+    from scraper import get_engine
+    engine = get_engine()
+    try:
+        engine.verify_position(position_id, True)
+        return {"status": "ok", "message": f"Position {position_id} verified"}
+    finally:
+        engine.close()
+
+
+@app.post("/api/admin/scraped/{position_id}/dismiss")
+async def scraped_dismiss(position_id: int, request: Request):
+    check_admin_session(request)
+    from scraper import get_engine
+    engine = get_engine()
+    try:
+        engine.dismiss_position(position_id)
+        return {"status": "ok", "message": f"Position {position_id} dismissed"}
+    finally:
+        engine.close()
+
+
+@app.get("/api/health")
+async def health():
+    conn = get_db()
+    try:
+        conn.execute("SELECT 1 FROM companies LIMIT 1")
+        db_ok = True
+    except Exception:
+        db_ok = False
+    conn.close()
+    return {"status": "ok", "db": db_ok, "timestamp": datetime.now().isoformat()}
+
 
 if __name__ == "__main__":
     import uvicorn
