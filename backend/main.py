@@ -22,7 +22,7 @@ from recommender import get_today_picks
 from seed_data import seed
 from crypto_utils import encrypt, decrypt, derive_key
 from scheduler import get_scheduler
-from scraper import validate_all_urls
+from scraper import validate_all_urls, _update_program_statuses
 
 # ─── Config ───
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -89,13 +89,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[Lifespan] FinTech seeding warning (non-fatal): {e}")
     get_scheduler().start()
-    # Validate careers URLs and update program statuses on startup
+    # Fast startup: update program statuses only (SQL, no network)
     try:
-        result = validate_all_urls()
-        print(f"[Lifespan] URL validation: {result['urls_checked']} checked, "
-              f"{result['newly_opened']} newly opened")
+        opened = _update_program_statuses()
+        if opened:
+            print(f"[Lifespan] {len(opened)} programs auto-opened")
+            from notifier import notify_new_openings
+            notify_new_openings(opened)
     except Exception as e:
-        print(f"[Lifespan] URL validation warning (non-fatal): {e}")
+        print(f"[Lifespan] Status update warning (non-fatal): {e}")
     yield
     get_scheduler().stop()
 

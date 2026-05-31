@@ -1174,7 +1174,7 @@ def validate_careers_url(url):
         return False
     try:
         import httpx as _httpx
-        resp = _httpx.head(url, timeout=10, follow_redirects=True,
+        resp = _httpx.head(url, timeout=5, follow_redirects=True,
                            headers={"User-Agent": "FinanceInternRadar/1.0"})
         return resp.status_code < 400
     except Exception:
