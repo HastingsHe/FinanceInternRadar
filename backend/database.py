@@ -171,6 +171,32 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # ─── Migration: fix careers_url to point to intern/students pages ───
+    _careers_url_fixes = {
+        # US
+        "Bridgewater Associates": "https://www.bridgewater.com/working-at-bridgewater/students",
+        "Centerview Partners": "http://centerviewpartners.com/careers.aspx",
+        "D.E. Shaw & Co.": "https://campus.deshaw.com",
+        "Hudson River Trading": "https://www.hudsonrivertrading.com/student-opportunities/",
+        "Jane Street": "https://www.janestreet.com/join-jane-street/internships/",
+        "PJT Partners": "https://www.pjtpartners.com/careers/students",
+        "Two Sigma": "https://www.twosigma.com/careers/students/",
+        # CN
+        "CICC (中金公司)": "https://cicc.zhiye.com",
+        "CITIC Securities (中信证券)": "https://careers.citics.com/",
+        "Huatai Securities (华泰证券)": "https://job.htsc.com.cn/",
+        # HK
+        "BOCI (中银国际)": "https://www.bocichina.com/main/joinus/campusrecruitment/index.shtml",
+    }
+    for name, new_url in _careers_url_fixes.items():
+        try:
+            cursor.execute(
+                "UPDATE companies SET careers_url = ?, careers_url_valid = NULL WHERE name = ?",
+                (new_url, name),
+            )
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 
