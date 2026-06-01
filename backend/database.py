@@ -187,6 +187,12 @@ def init_db():
         "Huatai Securities (华泰证券)": "https://job.htsc.com.cn/",
         # HK
         "BOCI (中银国际)": "https://www.bocichina.com/main/joinus/campusrecruitment/index.shtml",
+        "HKEX (港交所)": "https://www.hkexgroup.com/About-HKEX/Careers-at-HKEX/Early-Careers",
+        # CN – 国泰君安+海通已合并为国泰海通证券
+        "Guotai Junan (国泰君安)": "https://hr.gtht.com",
+        "Haitong Securities (海通证券)": "https://hr.gtht.com",
+        # UK – Rothschild URL 本身正确，仅被 WAF 拦截自动化工具
+        "Rothschild & Co": "https://www.rothschildandco.com/en/careers/students-graduates/",
     }
     for name, new_url in _careers_url_fixes.items():
         try:
